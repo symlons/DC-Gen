@@ -62,19 +62,31 @@ class RMSNorm2d(nn.LayerNorm):
         x = x.permute(0, 3, 1, 2)
         return x
 
+class RMSNorm3d(nn.LayerNorm):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() != 5:
+            raise ValueError(f"RMSNorm3d expects input of shape [B, C, D, H, W], got {x.shape}")
+        x = x.permute(0, 2, 3, 4, 1)  # [B, D, H, W, C]
+        x = x / torch.sqrt(torch.square(x).mean(dim=-1, keepdim=True) + self.eps)
+        if self.elementwise_affine:
+            x = x * self.weight + self.bias
+        x = x.permute(0, 4, 1, 2, 3)  # back to [B, C, D, H, W]
+        return x
 
 # register normalization function here
 REGISTERED_NORM_DICT: dict[str, type] = {
     "bn2d": nn.BatchNorm2d,
+    "bn3d": nn.BatchNorm3d,
     "ln": nn.LayerNorm,
     "ln2d": LayerNorm2d,
     "rms2d": RMSNorm2d,
+    "rms3d": RMSNorm3d,
     "trms2d": TritonRMSNorm2d,
 }
 
 
 def build_norm(name="bn2d", num_features=None, **kwargs) -> Optional[nn.Module]:
-    if name in ["ln", "ln2d", "rms2d", "trms2d"]:
+    if name in ["ln", "ln2d", "rms2d", "trms2d", "rms3d"]:
         kwargs["normalized_shape"] = num_features
     else:
         kwargs["num_features"] = num_features

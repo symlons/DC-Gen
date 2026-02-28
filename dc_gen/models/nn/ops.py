@@ -61,33 +61,91 @@ __all__ = [
 #################################################################################
 
 
+# class ConvLayer(nn.Module):
+#     def __init__(
+#         self,
+#         in_channels: int,
+#         out_channels: int,
+#         kernel_size: int = 3,
+#         stride: int = 1,
+#         dilation: int = 1,
+#         groups: int = 1,
+#         use_bias: bool = False,
+#         dropout: float = 0,
+#         norm: Optional[str] = "bn2d",
+#         act_func: Optional[str] = "relu",
+#     ):
+#         super(ConvLayer, self).__init__()
+
+#         padding = get_same_padding(kernel_size)
+#         padding *= dilation
+
+#         self.dropout = nn.Dropout2d(dropout, inplace=False) if dropout > 0 else None
+#         self.conv = nn.Conv2d(
+#             in_channels,
+#             out_channels,
+#             kernel_size=(kernel_size, kernel_size),
+#             stride=(stride, stride),
+#             padding=padding,
+#             dilation=(dilation, dilation),
+#             groups=groups,
+#             bias=use_bias,
+#         )
+#         self.norm = build_norm(norm, num_features=out_channels)
+#         self.act = build_act(act_func)
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         if self.dropout is not None:
+#             x = self.dropout(x)
+#         x = self.conv(x)
+#         if self.norm:
+#             x = self.norm(x)
+#         if self.act:
+#             x = self.act(x)
+#         return x
+
 class ConvLayer(nn.Module):
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
         kernel_size: int = 3,
+        kernel_depth: int = 3,
         stride: int = 1,
         dilation: int = 1,
         groups: int = 1,
         use_bias: bool = False,
         dropout: float = 0,
-        norm: Optional[str] = "bn2d",
+        norm: Optional[str] = "rmsnorm3d",
         act_func: Optional[str] = "relu",
     ):
-        super(ConvLayer, self).__init__()
+        super().__init__()
 
-        padding = get_same_padding(kernel_size)
-        padding *= dilation
+        def get_same_padding(k):
+            if k % 2 == 1:
+                return k // 2
+            else:
+                raise ValueError("kernel size must be odd for same padding")
 
-        self.dropout = nn.Dropout2d(dropout, inplace=False) if dropout > 0 else None
-        self.conv = nn.Conv2d(
+        padding = (
+            get_same_padding(kernel_depth),
+            get_same_padding(kernel_size),
+            get_same_padding(kernel_size),
+        )
+
+        if isinstance(stride, tuple):
+            conv_stride = stride
+        else:
+            conv_stride = (1, stride, stride)
+
+        self.dropout = nn.Dropout3d(dropout) if dropout > 0 else None
+        self.conv = nn.Conv3d(
             in_channels,
             out_channels,
-            kernel_size=(kernel_size, kernel_size),
-            stride=(stride, stride),
+            kernel_size=(kernel_depth, kernel_size, kernel_size),
+            stride=conv_stride,
             padding=padding,
-            dilation=(dilation, dilation),
+            dilation=(1, dilation, dilation),
             groups=groups,
             bias=use_bias,
         )
@@ -95,7 +153,7 @@ class ConvLayer(nn.Module):
         self.act = build_act(act_func)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.dropout is not None:
+        if self.dropout:
             x = self.dropout(x)
         x = self.conv(x)
         if self.norm:
@@ -103,7 +161,6 @@ class ConvLayer(nn.Module):
         if self.act:
             x = self.act(x)
         return x
-
 
 class AdaptiveOutputConvLayer(nn.Module):
     def __init__(
@@ -215,12 +272,13 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
     ):
         super().__init__()
         self.factor = factor
-        out_ratio = factor**2
+        out_ratio = factor ** 2
         assert out_channels % out_ratio == 0
         self.conv = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels // out_ratio,
             kernel_size=kernel_size,
+            kernel_depth=1,
             use_bias=True,
             norm=None,
             act_func=None,
@@ -228,7 +286,12 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
-        x = F.pixel_unshuffle(x, self.factor)
+        B, C, D, H, W = x.shape
+        f = self.factor
+        assert H % f == 0 and W % f == 0
+        x = x.view(B, C, D, H // f, f, W // f, f)
+        x = x.permute(0, 1, 4, 6, 2, 3, 5)
+        x = x.reshape(B, C * f * f, D, H // f, W // f)
         return x
 
 
@@ -243,14 +306,24 @@ class PixelUnshuffleChannelAveragingDownSampleLayer(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.factor = factor
+        # Only H/W are downsampled, so group size only depends on factor^2
         assert in_channels * factor**2 % out_channels == 0
         self.group_size = in_channels * factor**2 // out_channels
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.pixel_unshuffle(x, self.factor)
-        B, C, H, W = x.shape
-        x = x.view(B, self.out_channels, self.group_size, H, W)
+        B, C, D, H, W = x.shape
+        f = self.factor
+
+        assert H % f == 0 and W % f == 0
+
+        # Only split H and W, keep D unchanged
+        x = x.view(B, C, D, H // f, f, W // f, f)
+        x = x.permute(0, 1, 4, 6, 2, 3, 5).contiguous()  # B, C, f^2, D, H//f, W//f
+        x = x.view(B, C * f**2, D, H // f, W // f)
+        x = x.view(B, self.out_channels, self.group_size, D, H // f, W // f)
         x = x.mean(dim=2)
+        print("X.shape after PixelUnshuffleChannelAveragingDownSampleLayer", x.shape)
+
         return x
 
 
@@ -275,8 +348,19 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        print("running ConvPixelShuffleUpSampleLayer with input shape", x.shape)
+
+        B, C, D, H, W = x.shape
         x = self.conv(x)
-        x = F.pixel_shuffle(x, self.factor)
+
+        r = self.factor
+        C2 = x.shape[1]
+
+        x = x.permute(0, 2, 1, 3, 4).reshape(B * D, C2, H, W)
+        x = F.pixel_shuffle(x, r)
+        x = x.view(B, D, C2 // (r**2), H * r, W * r)
+        x = x.permute(0, 2, 1, 3, 4)
+
         return x
 
 
@@ -322,8 +406,14 @@ class ChannelDuplicatingPixelShuffleUpSampleLayer(nn.Module):
         self.repeats = out_channels * factor**2 // in_channels
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        print("running ChannelDuplicatingPixelShuffleUpSampleLayer with input shape", x.shape)
+        b, c, d, h, w = x.shape
         x = x.repeat_interleave(self.repeats, dim=1)
+        x = x.reshape(b * d, -1, h, w)
         x = F.pixel_shuffle(x, self.factor)
+        _, c_out, h_out, w_out = x.shape
+        x = x.reshape(b, d, c_out, h_out, w_out)
+        x = x.permute(0, 2, 1, 3, 4)
         return x
 
 
@@ -1286,6 +1376,7 @@ class ResidualBlock(nn.Module):
             res = self.forward_main(x) + self.shortcut(x)
             if self.post_act:
                 res = self.post_act(res)
+        print("res block.shape", res.shape)
         return res
 
 

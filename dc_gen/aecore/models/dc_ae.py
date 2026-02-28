@@ -55,7 +55,7 @@ class EncoderConfig:
     width_list: tuple[int, ...] = (128, 256, 512, 512, 1024, 1024)
     depth_list: tuple[int, ...] = (2, 2, 2, 2, 2, 2)
     block_type: Any = "ResBlock"
-    norm: Any = "trms2d"
+    norm: Any = "rms3d"
     act: str = "silu"
     downsample_block_type: str = "ConvPixelUnshuffle"
     downsample_match_channel: bool = True
@@ -204,13 +204,14 @@ def build_stage_main(
         stage.append(block)
     return stage
 
-
 def build_downsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str]) -> nn.Module:
+    print("block_type", block_type)
     if block_type == "Conv":
         block = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=3,
+            kernel_depth=1,
             stride=2,
             use_bias=True,
             norm=None,
@@ -259,23 +260,28 @@ def build_upsample_block(block_type: str, in_channels: int, out_channels: int, s
 
 def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: int, downsample_block_type: str):
     if factor == 1:
+        print("Factor of 1")
         block = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=3,
+            kernel_depth=1,
             stride=1,
             use_bias=True,
             norm=None,
             act_func=None,
         )
     elif factor == 2:
+        print("Factor of 2")
         block = build_downsample_block(
-            block_type=downsample_block_type, in_channels=in_channels, out_channels=out_channels, shortcut=None
+            block_type=downsample_block_type,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            shortcut=None
         )
     else:
         raise ValueError(f"downsample factor {factor} is not supported for encoder project in")
     return block
-
 
 def build_encoder_project_out_block(
     block_type: str,
@@ -400,6 +406,8 @@ class Encoder(nn.Module):
         )
         assert isinstance(cfg.norm, str) or (isinstance(cfg.norm, list) and len(cfg.norm) == num_stages)
 
+        print("CFG.in_channels", cfg.in_channels)
+        print("out channels:", cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1])
         self.project_in = build_encoder_project_in_block(
             in_channels=cfg.in_channels,
             out_channels=cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1],
@@ -467,16 +475,24 @@ class Encoder(nn.Module):
     def forward(
         self, x: torch.Tensor, latent_channels: Optional[int | list[int]] = None
     ) -> torch.Tensor | list[torch.Tensor]:
+        print("Input shape:", x.shape)
         x = self.project_in(x)
-        for stage in self.stages:
+        print("After project_in:", x.shape)
+
+        print("self.stages", self.stages)
+        for stage_id, stage in enumerate(self.stages):
             if len(stage.op_list) == 0:
                 continue
-            for block in stage.op_list:
+            for block_id, block in enumerate(stage.op_list):
                 x = block(x)
+                print(f"After stage {stage_id} block {block_id}: {x.shape}")
+                print("------------------------------------")
+
         if latent_channels is not None:
             assert isinstance(self.project_out, OpSequential) and len(self.project_out.op_list) == 1
             if isinstance(latent_channels, int):
                 x = self.project_out.op_list[0](x, out_channels=latent_channels)
+                print("After project_out with int latent_channels:", x.shape)
             elif isinstance(latent_channels, list) and all(
                 isinstance(latent_channels_, int) for latent_channels_ in latent_channels
             ):
@@ -484,10 +500,13 @@ class Encoder(nn.Module):
                     self.project_out.op_list[0](x, out_channels=latent_channels_)
                     for latent_channels_ in latent_channels
                 ]
+                print("After project_out with list latent_channels:", [xx.shape for xx in x])
             else:
                 raise ValueError(f"latent_channels {latent_channels} is not supported")
         else:
             x = self.project_out(x)
+            print("After project_out:", x.shape)
+
         return x
 
 
@@ -587,9 +606,9 @@ class DCAE(BaseAE):
         else:
             raise NotImplementedError
 
-    @property
-    def spatial_compression_ratio(self) -> int:
-        return 2 ** (self.decoder.num_stages - 1)
+    # @property
+    # def spatial_compression_ratio(self) -> int:
+    #     return 2 ** (self.decoder.num_stages - 1)
 
     def encode(self, x: torch.Tensor, latent_channels: Optional[list[int]] = None) -> torch.Tensor | list[torch.Tensor]:
         x = self.encoder(x, latent_channels=latent_channels)
@@ -602,13 +621,21 @@ class DCAE(BaseAE):
 
 def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
     if name in ["dc-ae-f32c32-in-1.0", "dc-ae-f32c32-in-1.0-256px", "dc-ae-f32c32-mix-1.0"]:
+        # cfg_str = (
+        #     "latent_channels=32 "
+        #     "encoder.block_type=[ResBlock,ResBlock,ResBlock,EViTGLU,EViTGLU,EViTGLU] "
+        #     "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
+        #     "decoder.block_type=[ResBlock,ResBlock,ResBlock,EViTGLU,EViTGLU,EViTGLU] "
+        #     "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
+        #     "decoder.norm=[bn3d,bn3d,bn3d,rms3d,rms3d,rms3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+        # )
         cfg_str = (
             "latent_channels=32 "
-            "encoder.block_type=[ResBlock,ResBlock,ResBlock,EViTGLU,EViTGLU,EViTGLU] "
+            "encoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
-            "decoder.block_type=[ResBlock,ResBlock,ResBlock,EViTGLU,EViTGLU,EViTGLU] "
+            "decoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
-            "decoder.norm=[bn2d,bn2d,bn2d,trms2d,trms2d,trms2d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+            "decoder.norm=[bn3d,bn3d,bn3d,rms3d,rms3d,rms3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
         )
     elif name in ["dc-ae-f32c32-sana-1.0"]:
         cfg_str = (
@@ -651,6 +678,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
     else:
         raise NotImplementedError
     cfg = OmegaConf.from_dotlist(cfg_str.split(" "))
+    print(OmegaConf.to_yaml(cfg))
     cfg: DCAEConfig = OmegaConf.to_object(OmegaConf.merge(OmegaConf.structured(DCAEConfig), cfg))
     cfg.pretrained_path = pretrained_path
     return cfg
