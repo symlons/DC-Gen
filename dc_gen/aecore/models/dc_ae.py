@@ -40,7 +40,10 @@ from ...models.nn.ops import (
     PixelUnshuffleChannelAveragingDownSampleLayer,
     ResBlock,
     ResidualBlock,
+    ResBlock3D,
     SoftmaxCrossAttention,
+    DepthAverageDownsample,
+    DepthChannelDuplicatingUpsample
 )
 from ...models.utils.network import get_submodule_weights
 from .base import BaseAE, BaseAEConfig
@@ -87,7 +90,7 @@ class DecoderConfig:
 
 @dataclass
 class DCAEConfig(BaseAEConfig):
-    in_channels: int = 3
+    in_channels: int = 1
     latent_channels: int = 32
     encoder: EncoderConfig = field(
         default_factory=lambda: EncoderConfig(in_channels="${..in_channels}", latent_channels="${..latent_channels}")
@@ -121,6 +124,31 @@ def build_block(
             act_func=(act, None),
         )
         block = ResidualBlock(main_block, IdentityLayer())
+    elif block_name == "ResBlock3D":
+        assert in_channels == out_channels
+        main_block = ResBlock3D(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=3,
+            stride=(2, 1, 1),
+            use_bias=(True, False),
+            norm=(None, norm),
+            act_func=(act, None),
+        )
+        block = ResidualBlock(main_block, DepthAverageDownsample())
+    elif block_name == "UpResBlock3D":
+        main_block = ResBlock(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=3,
+            stride=1,
+            use_bias=(True, False),
+            norm=(None, norm),
+            act_func=(act, None),
+        )
+        shortcut = DepthChannelDuplicatingUpsample(in_channels, out_channels, depth_factor=2)
+        block = ResidualBlock(main_block, IdentityLayer())
+        block = main_block
     elif block_name == "GLUResBlock":
         assert in_channels == out_channels
         main_block = GLUResBlock(
@@ -205,7 +233,6 @@ def build_stage_main(
     return stage
 
 def build_downsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str]) -> nn.Module:
-    print("block_type", block_type)
     if block_type == "Conv":
         block = ConvLayer(
             in_channels=in_channels,
@@ -260,7 +287,6 @@ def build_upsample_block(block_type: str, in_channels: int, out_channels: int, s
 
 def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: int, downsample_block_type: str):
     if factor == 1:
-        print("Factor of 1")
         block = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -272,7 +298,6 @@ def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: 
             act_func=None,
         )
     elif factor == 2:
-        print("Factor of 2")
         block = build_downsample_block(
             block_type=downsample_block_type,
             in_channels=in_channels,
@@ -329,10 +354,61 @@ def build_encoder_project_out_block(
         raise ValueError(f"shortcut {shortcut} is not supported for encoder project out")
     return block
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Tuple, Optional
+
+class ConvLayerUpsample(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: Tuple[int, int, int] = (1, 1, 1),
+        use_bias: bool = False,
+        norm: Optional[str] = "bn3d",
+        act_func: Optional[str] = "relu6",
+        depth_scale: int = 4,
+    ):
+        super().__init__()
+        if isinstance(stride, int):
+            stride = (stride, stride, stride)
+        padding = tuple(k // 2 for k in (kernel_size, kernel_size, kernel_size))
+        self.conv = nn.Conv3d(
+            in_channels, out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            bias=use_bias
+        )
+        self.depth_scale = depth_scale
+
+        if norm == "bn3d":
+            self.norm = nn.BatchNorm3d(out_channels)
+        else:
+            self.norm = nn.Identity()
+
+        if act_func == "relu6":
+            self.act = nn.ReLU6(inplace=True)
+        elif act_func == "relu":
+            self.act = nn.ReLU(inplace=True)
+        elif act_func == "silu":
+            self.act = nn.SiLU(inplace=True)
+        else:
+            self.act = nn.Identity()
+
+    def forward(self, x):
+        # Upsample depth first
+        x = F.interpolate(x, scale_factor=(self.depth_scale, 1, 1), mode='trilinear', align_corners=False)
+        x = self.conv(x)
+        x = self.norm(x)
+        x = self.act(x)
+        return x
 
 def build_decoder_project_in_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str]):
     if block_type == "ConvLayer":
-        block = ConvLayer(
+        block = ConvLayerUpsample(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=3,
@@ -355,9 +431,10 @@ def build_decoder_project_in_block(block_type: str, in_channels: int, out_channe
         pass
     elif shortcut == "duplicating":
         shortcut_block = ChannelDuplicatingPixelShuffleUpSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, factor=1
+            in_channels=in_channels, out_channels=out_channels, factor=1,  depth_scale=4
         )
         block = ResidualBlock(block, shortcut_block)
+        # block = block
     else:
         raise ValueError(f"shortcut {shortcut} is not supported for decoder project in")
     return block
@@ -406,8 +483,6 @@ class Encoder(nn.Module):
         )
         assert isinstance(cfg.norm, str) or (isinstance(cfg.norm, list) and len(cfg.norm) == num_stages)
 
-        print("CFG.in_channels", cfg.in_channels)
-        print("out channels:", cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1])
         self.project_in = build_encoder_project_in_block(
             in_channels=cfg.in_channels,
             out_channels=cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1],
@@ -475,24 +550,18 @@ class Encoder(nn.Module):
     def forward(
         self, x: torch.Tensor, latent_channels: Optional[int | list[int]] = None
     ) -> torch.Tensor | list[torch.Tensor]:
-        print("Input shape:", x.shape)
         x = self.project_in(x)
-        print("After project_in:", x.shape)
 
-        print("self.stages", self.stages)
         for stage_id, stage in enumerate(self.stages):
             if len(stage.op_list) == 0:
                 continue
             for block_id, block in enumerate(stage.op_list):
                 x = block(x)
-                print(f"After stage {stage_id} block {block_id}: {x.shape}")
-                print("------------------------------------")
 
         if latent_channels is not None:
             assert isinstance(self.project_out, OpSequential) and len(self.project_out.op_list) == 1
             if isinstance(latent_channels, int):
                 x = self.project_out.op_list[0](x, out_channels=latent_channels)
-                print("After project_out with int latent_channels:", x.shape)
             elif isinstance(latent_channels, list) and all(
                 isinstance(latent_channels_, int) for latent_channels_ in latent_channels
             ):
@@ -500,12 +569,10 @@ class Encoder(nn.Module):
                     self.project_out.op_list[0](x, out_channels=latent_channels_)
                     for latent_channels_ in latent_channels
                 ]
-                print("After project_out with list latent_channels:", [xx.shape for xx in x])
             else:
                 raise ValueError(f"latent_channels {latent_channels} is not supported")
         else:
             x = self.project_out(x)
-            print("After project_out:", x.shape)
 
         return x
 
@@ -571,7 +638,9 @@ class Decoder(nn.Module):
         )
 
     def forward_single(self, x: torch.Tensor) -> torch.Tensor:
+        # print("Decoder project in input shape:", x.shape)
         x = self.project_in(x)
+        # print("Decoder project in output shape:", x.shape)
         for stage in reversed(self.stages):
             if len(stage.op_list) == 0:
                 continue
@@ -606,9 +675,9 @@ class DCAE(BaseAE):
         else:
             raise NotImplementedError
 
-    # @property
-    # def spatial_compression_ratio(self) -> int:
-    #     return 2 ** (self.decoder.num_stages - 1)
+    @property
+    def spatial_compression_ratio(self) -> int:
+        return 2 ** (self.decoder.num_stages - 1)
 
     def encode(self, x: torch.Tensor, latent_channels: Optional[list[int]] = None) -> torch.Tensor | list[torch.Tensor]:
         x = self.encoder(x, latent_channels=latent_channels)
@@ -631,7 +700,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
         # )
         cfg_str = (
             "latent_channels=32 "
-            "encoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
+            "encoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock3D] "
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
@@ -678,7 +747,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
     else:
         raise NotImplementedError
     cfg = OmegaConf.from_dotlist(cfg_str.split(" "))
-    print(OmegaConf.to_yaml(cfg))
+    # print(OmegaConf.to_yaml(cfg))
     cfg: DCAEConfig = OmegaConf.to_object(OmegaConf.merge(OmegaConf.structured(DCAEConfig), cfg))
     cfg.pretrained_path = pretrained_path
     return cfg

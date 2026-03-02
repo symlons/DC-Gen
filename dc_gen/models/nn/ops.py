@@ -24,6 +24,7 @@ from torch.amp import autocast
 from ..utils import get_same_padding, list_sum, resize, val2list, val2tuple
 from .act import build_act
 from .norm import TritonRMSNorm2d, build_norm
+from typing import Optional, Tuple
 
 __all__ = [
     "ConvLayer",
@@ -322,7 +323,6 @@ class PixelUnshuffleChannelAveragingDownSampleLayer(nn.Module):
         x = x.view(B, C * f**2, D, H // f, W // f)
         x = x.view(B, self.out_channels, self.group_size, D, H // f, W // f)
         x = x.mean(dim=2)
-        print("X.shape after PixelUnshuffleChannelAveragingDownSampleLayer", x.shape)
 
         return x
 
@@ -348,7 +348,6 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        print("running ConvPixelShuffleUpSampleLayer with input shape", x.shape)
 
         B, C, D, H, W = x.shape
         x = self.conv(x)
@@ -397,16 +396,25 @@ class ChannelDuplicatingPixelShuffleUpSampleLayer(nn.Module):
         in_channels: int,
         out_channels: int,
         factor: int,
+        depth_scale: int = 1,
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.factor = factor
+        self.depth_scale = depth_scale
         assert out_channels * factor**2 % in_channels == 0
         self.repeats = out_channels * factor**2 // in_channels
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        print("running ChannelDuplicatingPixelShuffleUpSampleLayer with input shape", x.shape)
+        if self.depth_scale != 1:
+            x = F.interpolate(
+                x,
+                scale_factor=(self.depth_scale, 1, 1),
+                mode="trilinear",
+                align_corners=False,
+            )
+
         b, c, d, h, w = x.shape
         x = x.repeat_interleave(self.repeats, dim=1)
         x = x.reshape(b * d, -1, h, w)
@@ -770,7 +778,122 @@ class ResBlock(nn.Module):
         x = self.conv2(x)
         return x
 
+def val2tuple(val, n):
+    if isinstance(val, tuple) or isinstance(val, list):
+        return tuple(val)
+    return tuple([val] * n)
 
+class DepthAverageDownsample(nn.Module):
+    def __init__(self, factor: int = 2):
+        super().__init__()
+        self.factor = factor
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x shape: [B, C, D, H, W]
+        if self.factor == 1:
+            return x
+        B, C, D, H, W = x.shape
+        # make sure depth is divisible by factor
+        assert D % self.factor == 0, f"Depth {D} not divisible by factor {self.factor}"
+        x = x.view(B, C, D // self.factor, self.factor, H, W)
+        x = x.mean(dim=3)
+        return x
+
+class DepthChannelDuplicatingUpsample(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, depth_factor: int = 2):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.depth_factor = depth_factor
+        self.channel_repeats = out_channels // in_channels
+        assert out_channels % in_channels == 0, "out_channels must be divisible by in_channels"
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, d, h, w = x.shape
+        # Repeat channels if needed
+        if self.channel_repeats > 1:
+            x = x.repeat_interleave(self.channel_repeats, dim=1)
+        # Upsample depth if needed
+        if self.depth_factor > 1:
+            x = F.interpolate(x, scale_factor=(self.depth_factor, 1, 1), mode="trilinear", align_corners=False)
+        return x
+
+class ConvLayer3D(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: Tuple[int, int, int] = (1, 1, 1),
+        use_bias: bool = False,
+        norm: Optional[str] = "bn3d",
+        act_func: Optional[str] = "relu6",
+    ):
+        super().__init__()
+        if isinstance(stride, int):
+            stride = (stride, stride, stride)
+        padding = tuple(k // 2 for k in (kernel_size, kernel_size, kernel_size))
+        self.conv = nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=use_bias)
+        if norm == "bn3d":
+            self.norm = nn.BatchNorm3d(out_channels)
+        else:
+            self.norm = nn.Identity()
+        if act_func == "relu6":
+            self.act = nn.ReLU6(inplace=True)
+        elif act_func == "relu":
+            self.act = nn.ReLU(inplace=True)
+        elif act_func == "silu":
+            self.act = nn.SiLU(inplace=True)
+        else:
+            self.act = nn.Identity()
+
+    def forward(self, x):
+        return self.act(self.norm(self.conv(x)))
+
+class ResBlock3D(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: tuple[int, int, int] = (1, 1, 1),
+        mid_channels: Optional[int] = None,
+        expand_ratio: float = 1,
+        use_bias: bool = False,
+        norm: tuple[Optional[str]] = (None, None),
+        act_func: tuple[Optional[str]] = ("relu", None),
+    ):
+        super().__init__()
+        use_bias = val2tuple(use_bias, 2)
+        norm = val2tuple(norm, 2)
+        act_func = val2tuple(act_func, 2)
+
+        mid_channels = round(in_channels * expand_ratio) if mid_channels is None else mid_channels
+
+        self.conv1 = ConvLayer3D(
+            in_channels,
+            mid_channels,
+            kernel_size,
+            stride,
+            use_bias=use_bias[0],
+            norm=norm[0],
+            act_func=act_func[0],
+        )
+        self.conv2 = ConvLayer3D(
+            mid_channels,
+            out_channels,
+            kernel_size,
+            (1, 1, 1),
+            use_bias=use_bias[1],
+            norm=norm[1],
+            act_func=act_func[1],
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.conv2(x)
+        return x
+ 
 class GLUResBlock(nn.Module):
     def __init__(
         self,
@@ -1376,7 +1499,6 @@ class ResidualBlock(nn.Module):
             res = self.forward_main(x) + self.shortcut(x)
             if self.post_act:
                 res = self.post_act(res)
-        print("res block.shape", res.shape)
         return res
 
 

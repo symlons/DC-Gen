@@ -1,27 +1,36 @@
 from dc_gen.ae_model_zoo import DCAE_HF
 import torch
+import torch.nn.functional as F
 
 device = torch.device("cuda")
 
 model_name = "dc-ae-f32c32-in-1.0"
 dc_ae = DCAE_HF(model_name=model_name)
-dc_ae = dc_ae.to(device).eval()
 
-# 2D variant [B, C, H, W]
-# x2d = torch.randn(1, 3, 1024, 1024).to(device)
+dc_ae = dc_ae.to(torch.bfloat16)
+dc_ae = dc_ae.to(device).train()
 
-# latent2d = dc_ae.encode(x2d)
-# print("2D Latent shape:", latent2d.shape)
+print("Model parameter dtype:", next(dc_ae.parameters()).dtype)
 
-# recon2d = dc_ae.decode(latent2d)
-# print("2D Reconstructed shape:", recon2d.shape)
+optimizer = torch.optim.AdamW(
+    dc_ae.parameters(),
+    lr=1e-4,
+    weight_decay=1e-2
+)
 
-# 3D variant [B, C, D, H, W]
-# x3d = torch.randn(1, 3, 2, 1024, 1024).to(device)
-x3d = torch.randn(1, 3, 16, 512, 512).to(device)
+x3d = torch.randn(1, 1, 64, 256, 256, device=device, dtype=torch.bfloat16)
+
+optimizer.zero_grad()
 
 latent3d = dc_ae.encode(x3d)
-print("3D Latent shape:", latent3d.shape)
-
 recon3d = dc_ae.decode(latent3d)
-print("3D Reconstructed shape:", recon3d.shape)
+
+loss = F.mse_loss(recon3d, x3d)
+
+loss.backward()
+
+optimizer.step()
+
+print("Loss:", loss.item())
+print("Latent shape:", latent3d.shape)
+print("Recon shape:", recon3d.shape)

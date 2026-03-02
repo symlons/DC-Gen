@@ -178,7 +178,8 @@ class AutoencoderKL(nn.Module):
             "asymmetric-autoencoder-kl-x-1-5",
             "asymmetric-autoencoder-kl-x-2",
         ]:
-            return self.model.encode(x).latent_dist.sample()
+            latent = self.model.encode(x).latent_dist.sample()
+            return latent
         else:
             raise ValueError(f"{self.model_name} is not supported for AutoencoderKL")
 

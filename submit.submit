@@ -1,0 +1,21 @@
+#!/bin/bash
+#SBATCH --time=720
+#SBATCH --job-name=dc_ae_l1
+#SBATCH --ntasks-per-node=4
+
+#SBATCH --mem=128G
+#SBATCH --gres=gpu:h200sxm:4
+#SBATCH --account=cai_ivs
+#SBATCH --partition=gpu_top
+#SBATCH --output=/cluster/home/kostfab1/dc_ae.out
+#SBATCH --error=/cluster/home/kostfab1/dc_ae.err
+
+export PYTHONUNBUFFERED=1
+ulimit -n 30000
+mkdir -p /tmp/cache
+
+source /cluster/home/kostfab1/dev/bin/activate
+module load python/3.12
+cd /cluster/home/kostfab1/DC-Gen
+
+srun python3 train_l1.py
