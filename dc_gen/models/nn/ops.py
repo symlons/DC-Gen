@@ -23,7 +23,7 @@ from torch.amp import autocast
 
 from ..utils import get_same_padding, list_sum, resize, val2list, val2tuple
 from .act import build_act
-from .norm import TritonRMSNorm2d, build_norm
+from .norm import build_norm
 
 __all__ = [
     "ConvLayer",
@@ -38,7 +38,7 @@ __all__ = [
     "LinearLayer",
     "IdentityLayer",
     "SEModule",
-    "CoordAttnModule",
+    # "CoordAttnModule",
     "DSConv",
     "MBConv",
     "FusedMBConv",
@@ -46,8 +46,8 @@ __all__ = [
     "ResBlock",
     "GLUResBlock",
     "ChannelAttentionResBlock",
-    "LiteMLA",
-    "ReLULinearAttention",
+    # "LiteMLA",
+    # "ReLULinearAttention",
     "SoftmaxAttention",
     "EfficientViTBlock",
     "ResidualBlock",
@@ -389,43 +389,43 @@ class SEModule(nn.Module):
         return module_input * x
 
 
-class CoordAttnModule(nn.Module):
-    "https://github.com/houqb/CoordAttention/blob/main/mbv2_ca.py"
-
-    def __init__(self, inp, oup, groups=4):
-        super().__init__()
-        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
-        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
-
-        mip = max(8, inp // groups)
-
-        self.conv1 = nn.Conv2d(inp, mip, kernel_size=1, stride=1, padding=0)
-        self.norm = TritonRMSNorm2d(mip)
-        self.conv2 = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
-        self.conv3 = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
-        self.act = nn.SiLU(inplace=True)
-
-    def forward(self, x):
-        identity = x
-        n, c, h, w = x.size()
-        x_h = self.pool_h(x)
-        x_w = self.pool_w(x).permute(0, 1, 3, 2)
-
-        y = torch.cat([x_h, x_w], dim=2)
-        y = self.conv1(y)
-        y = self.norm(y)
-        y = self.act(y)
-        x_h, x_w = torch.split(y, [h, w], dim=2)
-        x_w = x_w.permute(0, 1, 3, 2)
-
-        x_h = self.conv2(x_h).sigmoid()
-        x_w = self.conv3(x_w).sigmoid()
-        x_h = x_h.expand(-1, -1, h, w)
-        x_w = x_w.expand(-1, -1, h, w)
-
-        y = identity * x_w * x_h
-
-        return y
+# class CoordAttnModule(nn.Module):
+#     "https://github.com/houqb/CoordAttention/blob/main/mbv2_ca.py"
+#
+#     def __init__(self, inp, oup, groups=4):
+#         super().__init__()
+#         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+#         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+#
+#         mip = max(8, inp // groups)
+#
+#         self.conv1 = nn.Conv2d(inp, mip, kernel_size=1, stride=1, padding=0)
+#         self.norm = TritonRMSNorm2d(mip)
+#         self.conv2 = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
+#         self.conv3 = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
+#         self.act = nn.SiLU(inplace=True)
+#
+#     def forward(self, x):
+#         identity = x
+#         n, c, h, w = x.size()
+#         x_h = self.pool_h(x)
+#         x_w = self.pool_w(x).permute(0, 1, 3, 2)
+#
+#         y = torch.cat([x_h, x_w], dim=2)
+#         y = self.conv1(y)
+#         y = self.norm(y)
+#         y = self.act(y)
+#         x_h, x_w = torch.split(y, [h, w], dim=2)
+#         x_w = x_w.permute(0, 1, 3, 2)
+#
+#         x_h = self.conv2(x_h).sigmoid()
+#         x_w = self.conv3(x_w).sigmoid()
+#         x_h = x_h.expand(-1, -1, h, w)
+#         x_w = x_w.expand(-1, -1, h, w)
+#
+#         y = identity * x_w * x_h
+#
+#         return y
 
 
 #################################################################################
@@ -778,8 +778,8 @@ class ChannelAttentionResBlock(nn.Module):
         )
         if channel_attention_operation == "SEModule":
             self.channel_attention = SEModule(out_channels, reduction=4)
-        elif channel_attention_operation == "CoordAttnModule":
-            self.channel_attention = CoordAttnModule(out_channels, out_channels, groups=4)
+        # elif channel_attention_operation == "CoordAttnModule":
+        #     self.channel_attention = CoordAttnModule(out_channels, out_channels, groups=4)
         else:
             raise ValueError(f"channel_attention_operation {channel_attention_operation} is not supported")
         self.channel_attention_position = channel_attention_position
@@ -794,254 +794,254 @@ class ChannelAttentionResBlock(nn.Module):
         return x
 
 
-class LiteMLA(nn.Module):
-    r"""Lightweight multi-scale linear attention"""
+# class LiteMLA(nn.Module):
+#     r"""Lightweight multi-scale linear attention"""
+#
+#     def __init__(
+#         self,
+#         in_channels: int,
+#         out_channels: int,
+#         heads: Optional[int] = None,
+#         heads_ratio: float = 1.0,
+#         dim=8,
+#         use_bias=False,
+#         norm=(None, "bn2d"),
+#         act_func=(None, None),
+#         kernel_func="relu",
+#         scales: tuple[int, ...] = (5,),
+#         eps=1.0e-15,
+#         norm_qk: bool = False,
+#     ):
+#         super(LiteMLA, self).__init__()
+#         self.eps = eps
+#         heads = int(in_channels // dim * heads_ratio) if heads is None else heads
+#
+#         self.total_dim = total_dim = heads * dim
+#
+#         use_bias = val2tuple(use_bias, 2)
+#         norm = val2tuple(norm, 2)
+#         act_func = val2tuple(act_func, 2)
+#
+#         self.dim = dim
+#         self.qkv = ConvLayer(
+#             in_channels,
+#             3 * total_dim,
+#             1,
+#             use_bias=use_bias[0],
+#             norm=norm[0],
+#             act_func=act_func[0],
+#         )
+#         self.norm_qk = norm_qk
+#         if norm_qk:
+#             self.norm_q = TritonRMSNorm2d(total_dim)
+#             self.norm_k = TritonRMSNorm2d(total_dim)
+#         self.aggreg = nn.ModuleList(
+#             [
+#                 nn.Sequential(
+#                     nn.Conv2d(
+#                         3 * total_dim,
+#                         3 * total_dim,
+#                         scale,
+#                         padding=get_same_padding(scale),
+#                         groups=3 * total_dim,
+#                         bias=use_bias[0],
+#                     ),
+#                     nn.Conv2d(3 * total_dim, 3 * total_dim, 1, groups=3 * heads, bias=use_bias[0]),
+#                 )
+#                 for scale in scales
+#             ]
+#         )
+#         self.kernel_func = build_act(kernel_func, inplace=False)
+#
+#         self.proj = ConvLayer(
+#             total_dim * (1 + len(scales)),
+#             out_channels,
+#             1,
+#             use_bias=use_bias[1],
+#             norm=norm[1],
+#             act_func=act_func[1],
+#         )
+#
+#     @autocast(device_type="cuda", enabled=False)
+#     def relu_linear_att(self, qkv: torch.Tensor) -> torch.Tensor:
+#         B, _, H, W = list(qkv.size())
+#
+#         if qkv.dtype == torch.float16:
+#             qkv = qkv.float()
+#
+#         if self.norm_qk:
+#             q, k, v = (
+#                 qkv[:, : self.total_dim],
+#                 qkv[:, self.total_dim : 2 * self.total_dim],
+#                 qkv[:, 2 * self.total_dim :],
+#             )
+#             q, k = self.norm_q(q), self.norm_k(k)
+#             q, k, v = (
+#                 q.reshape(B, -1, self.dim, H * W),
+#                 k.reshape(B, -1, self.dim, H * W),
+#                 v.reshape(B, -1, self.dim, H * W),
+#             )
+#         else:
+#             qkv = torch.reshape(
+#                 qkv,
+#                 (
+#                     B,
+#                     -1,
+#                     3 * self.dim,
+#                     H * W,
+#                 ),
+#             )
+#             q, k, v = (
+#                 qkv[:, :, 0 : self.dim],
+#                 qkv[:, :, self.dim : 2 * self.dim],
+#                 qkv[:, :, 2 * self.dim :],
+#             )
+#
+#         # lightweight linear attention
+#         q = self.kernel_func(q)
+#         k = self.kernel_func(k)
+#
+#         # linear matmul
+#         trans_k = k.transpose(-1, -2)
+#
+#         v = F.pad(v, (0, 0, 0, 1), mode="constant", value=1)
+#         vk = torch.matmul(v, trans_k)
+#         out = torch.matmul(vk, q)
+#         if out.dtype == torch.bfloat16:
+#             out = out.float()
+#         out = out[:, :, :-1] / (out[:, :, -1:] + self.eps)
+#
+#         out = torch.reshape(out, (B, -1, H, W))
+#         return out
+#
+#     @autocast(device_type="cuda", enabled=False)
+#     def relu_quadratic_att(self, qkv: torch.Tensor) -> torch.Tensor:
+#         B, _, H, W = list(qkv.size())
+#
+#         if self.norm_qk:
+#             q, k, v = (
+#                 qkv[:, : self.total_dim],
+#                 qkv[:, self.total_dim : 2 * self.total_dim],
+#                 qkv[:, 2 * self.total_dim :],
+#             )
+#             q, k = self.norm_q(q), self.norm_k(k)
+#             q, k, v = (
+#                 q.reshape(B, -1, self.dim, H * W),
+#                 k.reshape(B, -1, self.dim, H * W),
+#                 v.reshape(B, -1, self.dim, H * W),
+#             )
+#         else:
+#             qkv = torch.reshape(
+#                 qkv,
+#                 (
+#                     B,
+#                     -1,
+#                     3 * self.dim,
+#                     H * W,
+#                 ),
+#             )
+#             q, k, v = (
+#                 qkv[:, :, 0 : self.dim],
+#                 qkv[:, :, self.dim : 2 * self.dim],
+#                 qkv[:, :, 2 * self.dim :],
+#             )
+#
+#         q = self.kernel_func(q)
+#         k = self.kernel_func(k)
+#
+#         att_map = torch.matmul(k.transpose(-1, -2), q)  # b h n n
+#         original_dtype = att_map.dtype
+#         if original_dtype in [torch.float16, torch.bfloat16]:
+#             att_map = att_map.float()
+#         att_map = att_map / (torch.sum(att_map, dim=2, keepdim=True) + self.eps)  # b h n n
+#         att_map = att_map.to(original_dtype)
+#         out = torch.matmul(v, att_map)  # b h d n
+#
+#         out = torch.reshape(out, (B, -1, H, W))
+#         return out
+#
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         # generate multi-scale q, k, v
+#         qkv = self.qkv(x)
+#         multi_scale_qkv = [qkv]
+#         for op in self.aggreg:
+#             multi_scale_qkv.append(op(qkv))
+#         qkv = torch.cat(multi_scale_qkv, dim=1)
+#
+#         H, W = list(qkv.size())[-2:]
+#         if H * W > self.dim:
+#             out = self.relu_linear_att(qkv).to(qkv.dtype)
+#         else:
+#             out = self.relu_quadratic_att(qkv)
+#         out = self.proj(out)
+#
+#         return out
 
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        heads: Optional[int] = None,
-        heads_ratio: float = 1.0,
-        dim=8,
-        use_bias=False,
-        norm=(None, "bn2d"),
-        act_func=(None, None),
-        kernel_func="relu",
-        scales: tuple[int, ...] = (5,),
-        eps=1.0e-15,
-        norm_qk: bool = False,
-    ):
-        super(LiteMLA, self).__init__()
-        self.eps = eps
-        heads = int(in_channels // dim * heads_ratio) if heads is None else heads
 
-        self.total_dim = total_dim = heads * dim
-
-        use_bias = val2tuple(use_bias, 2)
-        norm = val2tuple(norm, 2)
-        act_func = val2tuple(act_func, 2)
-
-        self.dim = dim
-        self.qkv = ConvLayer(
-            in_channels,
-            3 * total_dim,
-            1,
-            use_bias=use_bias[0],
-            norm=norm[0],
-            act_func=act_func[0],
-        )
-        self.norm_qk = norm_qk
-        if norm_qk:
-            self.norm_q = TritonRMSNorm2d(total_dim)
-            self.norm_k = TritonRMSNorm2d(total_dim)
-        self.aggreg = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Conv2d(
-                        3 * total_dim,
-                        3 * total_dim,
-                        scale,
-                        padding=get_same_padding(scale),
-                        groups=3 * total_dim,
-                        bias=use_bias[0],
-                    ),
-                    nn.Conv2d(3 * total_dim, 3 * total_dim, 1, groups=3 * heads, bias=use_bias[0]),
-                )
-                for scale in scales
-            ]
-        )
-        self.kernel_func = build_act(kernel_func, inplace=False)
-
-        self.proj = ConvLayer(
-            total_dim * (1 + len(scales)),
-            out_channels,
-            1,
-            use_bias=use_bias[1],
-            norm=norm[1],
-            act_func=act_func[1],
-        )
-
-    @autocast(device_type="cuda", enabled=False)
-    def relu_linear_att(self, qkv: torch.Tensor) -> torch.Tensor:
-        B, _, H, W = list(qkv.size())
-
-        if qkv.dtype == torch.float16:
-            qkv = qkv.float()
-
-        if self.norm_qk:
-            q, k, v = (
-                qkv[:, : self.total_dim],
-                qkv[:, self.total_dim : 2 * self.total_dim],
-                qkv[:, 2 * self.total_dim :],
-            )
-            q, k = self.norm_q(q), self.norm_k(k)
-            q, k, v = (
-                q.reshape(B, -1, self.dim, H * W),
-                k.reshape(B, -1, self.dim, H * W),
-                v.reshape(B, -1, self.dim, H * W),
-            )
-        else:
-            qkv = torch.reshape(
-                qkv,
-                (
-                    B,
-                    -1,
-                    3 * self.dim,
-                    H * W,
-                ),
-            )
-            q, k, v = (
-                qkv[:, :, 0 : self.dim],
-                qkv[:, :, self.dim : 2 * self.dim],
-                qkv[:, :, 2 * self.dim :],
-            )
-
-        # lightweight linear attention
-        q = self.kernel_func(q)
-        k = self.kernel_func(k)
-
-        # linear matmul
-        trans_k = k.transpose(-1, -2)
-
-        v = F.pad(v, (0, 0, 0, 1), mode="constant", value=1)
-        vk = torch.matmul(v, trans_k)
-        out = torch.matmul(vk, q)
-        if out.dtype == torch.bfloat16:
-            out = out.float()
-        out = out[:, :, :-1] / (out[:, :, -1:] + self.eps)
-
-        out = torch.reshape(out, (B, -1, H, W))
-        return out
-
-    @autocast(device_type="cuda", enabled=False)
-    def relu_quadratic_att(self, qkv: torch.Tensor) -> torch.Tensor:
-        B, _, H, W = list(qkv.size())
-
-        if self.norm_qk:
-            q, k, v = (
-                qkv[:, : self.total_dim],
-                qkv[:, self.total_dim : 2 * self.total_dim],
-                qkv[:, 2 * self.total_dim :],
-            )
-            q, k = self.norm_q(q), self.norm_k(k)
-            q, k, v = (
-                q.reshape(B, -1, self.dim, H * W),
-                k.reshape(B, -1, self.dim, H * W),
-                v.reshape(B, -1, self.dim, H * W),
-            )
-        else:
-            qkv = torch.reshape(
-                qkv,
-                (
-                    B,
-                    -1,
-                    3 * self.dim,
-                    H * W,
-                ),
-            )
-            q, k, v = (
-                qkv[:, :, 0 : self.dim],
-                qkv[:, :, self.dim : 2 * self.dim],
-                qkv[:, :, 2 * self.dim :],
-            )
-
-        q = self.kernel_func(q)
-        k = self.kernel_func(k)
-
-        att_map = torch.matmul(k.transpose(-1, -2), q)  # b h n n
-        original_dtype = att_map.dtype
-        if original_dtype in [torch.float16, torch.bfloat16]:
-            att_map = att_map.float()
-        att_map = att_map / (torch.sum(att_map, dim=2, keepdim=True) + self.eps)  # b h n n
-        att_map = att_map.to(original_dtype)
-        out = torch.matmul(v, att_map)  # b h d n
-
-        out = torch.reshape(out, (B, -1, H, W))
-        return out
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # generate multi-scale q, k, v
-        qkv = self.qkv(x)
-        multi_scale_qkv = [qkv]
-        for op in self.aggreg:
-            multi_scale_qkv.append(op(qkv))
-        qkv = torch.cat(multi_scale_qkv, dim=1)
-
-        H, W = list(qkv.size())[-2:]
-        if H * W > self.dim:
-            out = self.relu_linear_att(qkv).to(qkv.dtype)
-        else:
-            out = self.relu_quadratic_att(qkv)
-        out = self.proj(out)
-
-        return out
-
-
-class ReLULinearAttention(LiteMLA):
-    "relu linear attention used in efficientvit"
-
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        heads: Optional[int] = None,
-        heads_ratio: float = 1.0,
-        dim=32,
-        use_bias=False,
-        norm=(None, "ln2d"),
-        act_func=(None, None),
-        kernel_func="relu",
-        eps=1.0e-8,
-        norm_qk: bool = False,
-    ):
-        nn.Module.__init__(self)
-        self.eps = eps
-        heads = int(in_channels // dim * heads_ratio) if heads is None else heads
-
-        self.total_dim = total_dim = heads * dim
-
-        use_bias = val2tuple(use_bias, 2)
-        norm = val2tuple(norm, 2)
-        act_func = val2tuple(act_func, 2)
-
-        self.dim = dim
-        self.qkv = ConvLayer(
-            in_channels,
-            3 * total_dim,
-            1,
-            use_bias=use_bias[0],
-            norm=norm[0],
-            act_func=act_func[0],
-        )
-        self.norm_qk = norm_qk
-        if norm_qk:
-            self.norm_q = TritonRMSNorm2d(total_dim)
-            self.norm_k = TritonRMSNorm2d(total_dim)
-
-        self.kernel_func = build_act(kernel_func, inplace=False)
-
-        self.proj = ConvLayer(
-            total_dim,
-            out_channels,
-            1,
-            use_bias=use_bias[1],
-            norm=norm[1],
-            act_func=act_func[1],
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # generate multi-scale q, k, v
-        qkv = self.qkv(x)
-
-        H, W = list(qkv.size())[-2:]
-        if H * W > self.dim:
-            out = self.relu_linear_att(qkv).to(qkv.dtype)
-        else:
-            out = self.relu_quadratic_att(qkv)
-        out = self.proj(out)
-
-        return out
+# class ReLULinearAttention(LiteMLA):
+#     "relu linear attention used in efficientvit"
+#
+#     def __init__(
+#         self,
+#         in_channels: int,
+#         out_channels: int,
+#         heads: Optional[int] = None,
+#         heads_ratio: float = 1.0,
+#         dim=32,
+#         use_bias=False,
+#         norm=(None, "ln2d"),
+#         act_func=(None, None),
+#         kernel_func="relu",
+#         eps=1.0e-8,
+#         norm_qk: bool = False,
+#     ):
+#         nn.Module.__init__(self)
+#         self.eps = eps
+#         heads = int(in_channels // dim * heads_ratio) if heads is None else heads
+#
+#         self.total_dim = total_dim = heads * dim
+#
+#         use_bias = val2tuple(use_bias, 2)
+#         norm = val2tuple(norm, 2)
+#         act_func = val2tuple(act_func, 2)
+#
+#         self.dim = dim
+#         self.qkv = ConvLayer(
+#             in_channels,
+#             3 * total_dim,
+#             1,
+#             use_bias=use_bias[0],
+#             norm=norm[0],
+#             act_func=act_func[0],
+#         )
+#         self.norm_qk = norm_qk
+#         if norm_qk:
+#             self.norm_q = TritonRMSNorm2d(total_dim)
+#             self.norm_k = TritonRMSNorm2d(total_dim)
+#
+#         self.kernel_func = build_act(kernel_func, inplace=False)
+#
+#         self.proj = ConvLayer(
+#             total_dim,
+#             out_channels,
+#             1,
+#             use_bias=use_bias[1],
+#             norm=norm[1],
+#             act_func=act_func[1],
+#         )
+#
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         # generate multi-scale q, k, v
+#         qkv = self.qkv(x)
+#
+#         H, W = list(qkv.size())[-2:]
+#         if H * W > self.dim:
+#             out = self.relu_linear_att(qkv).to(qkv.dtype)
+#         else:
+#             out = self.relu_quadratic_att(qkv)
+#         out = self.proj(out)
+#
+#         return out
 
 
 class SoftmaxAttention(nn.Module):
@@ -1191,20 +1191,20 @@ class EfficientViTBlock(nn.Module):
         norm_qk: bool = False,
     ):
         super(EfficientViTBlock, self).__init__()
-        if context_module == "LiteMLA":
-            self.context_module = ResidualBlock(
-                LiteMLA(
-                    in_channels=in_channels,
-                    out_channels=in_channels,
-                    heads_ratio=heads_ratio,
-                    dim=dim,
-                    norm=(None, norm),
-                    scales=scales,
-                    norm_qk=norm_qk,
-                ),
-                IdentityLayer(),
-            )
-        elif context_module == "SoftmaxAttention":
+        # if context_module == "LiteMLA":
+            # self.context_module = ResidualBlock(
+            #     LiteMLA(
+            #         in_channels=in_channels,
+            #         out_channels=in_channels,
+            #         heads_ratio=heads_ratio,
+            #         dim=dim,
+            #         norm=(None, norm),
+            #         scales=scales,
+            #         norm_qk=norm_qk,
+            #     ),
+            #     IdentityLayer(),
+            # )
+        if context_module == "SoftmaxAttention":
             self.context_module = ResidualBlock(
                 SoftmaxAttention(
                     in_channels=in_channels,

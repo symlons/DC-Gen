@@ -4,7 +4,7 @@
 import torch
 from torch import nn
 
-from .....models.nn.ops import GLUMBConv, MBConv, ReLULinearAttention, SoftmaxAttention
+from .....models.nn.ops import GLUMBConv, MBConv, SoftmaxAttention
 
 __all__ = ["SanaClsTransformerBlock"]
 
@@ -23,16 +23,16 @@ class SanaClsTransformerBlock(nn.Module):
         super().__init__()
         self.hidden_dim = dim
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=norm_eps)
-        if use_linear_attn:
-            self.attn = ReLULinearAttention(
-                in_channels=dim,
-                out_channels=dim,
-                dim=attention_head_dim,
-                use_bias=(attention_bias, True),
-                norm=None,
-                eps=1e-8,
-            )
-        else:
+        # if use_linear_attn:
+        #     self.attn = ReLULinearAttention(
+        #         in_channels=dim,
+        #         out_channels=dim,
+        #         dim=attention_head_dim,
+        #         use_bias=(attention_bias, True),
+        #         norm=None,
+        #         eps=1e-8,
+        #     )
+        if not use_linear_attn:
             self.attn = SoftmaxAttention(
                 in_channels=dim, out_channels=dim, dim=attention_head_dim, use_bias=(attention_bias, True), norm=None
             )
