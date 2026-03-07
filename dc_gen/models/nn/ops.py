@@ -74,6 +74,7 @@ class ConvLayer(nn.Module):
         dropout: float = 0,
         norm: Optional[str] = "bn2d",
         act_func: Optional[str] = "relu",
+        dims: int = 2
     ):
         super(ConvLayer, self).__init__()
 
@@ -81,16 +82,28 @@ class ConvLayer(nn.Module):
         padding *= dilation
 
         self.dropout = nn.Dropout2d(dropout, inplace=False) if dropout > 0 else None
-        self.conv = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=(kernel_size, kernel_size),
-            stride=(stride, stride),
-            padding=padding,
-            dilation=(dilation, dilation),
-            groups=groups,
-            bias=use_bias,
-        )
+        if dims == 2:
+            self.conv = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=(kernel_size, kernel_size),
+                stride=(stride, stride),
+                padding=padding,
+                dilation=(dilation, dilation),
+                groups=groups,
+                bias=use_bias,
+            )
+        elif dims == 3:
+            self.conv = nn.Conv3d(
+                in_channels,
+                out_channels,
+                kernel_size=(kernel_size, kernel_size, kernel_size),
+                stride=(stride, stride, stride),
+                padding=padding,
+                dilation=(dilation, dilation, dilation),
+                groups=groups,
+                bias=use_bias,
+            )
         self.norm = build_norm(norm, num_features=out_channels)
         self.act = build_act(act_func)
 
@@ -206,16 +219,11 @@ class UpSampleLayer(nn.Module):
 
 
 class ConvPixelUnshuffleDownSampleLayer(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int,
-        factor: int,
-    ):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, factor: int, dims: int = 2):
         super().__init__()
         self.factor = factor
-        out_ratio = factor**2
+        self.dims = dims
+        out_ratio = factor ** dims
         assert out_channels % out_ratio == 0
         self.conv = ConvLayer(
             in_channels=in_channels,
@@ -224,11 +232,20 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
             use_bias=True,
             norm=None,
             act_func=None,
+            dims=dims
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
-        x = F.pixel_unshuffle(x, self.factor)
+        f = self.factor
+        if self.dims == 3:
+            B, C, D, H, W = x.shape
+            assert D % f == 0 and H % f == 0 and W % f == 0, "All spatial dims must be divisible by factor"
+            x = x.view(B, C, D//f, f, H//f, f, W//f, f)
+            x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+            x = x.view(B, C * f**3, D//f, H//f, W//f)
+        else:
+            x = F.pixel_unshuffle(x, f)
         return x
 
 
@@ -238,19 +255,36 @@ class PixelUnshuffleChannelAveragingDownSampleLayer(nn.Module):
         in_channels: int,
         out_channels: int,
         factor: int,
+        dims: int
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.factor = factor
-        assert in_channels * factor**2 % out_channels == 0
-        self.group_size = in_channels * factor**2 // out_channels
+        self.dims = dims
+        if dims == 2:
+            assert in_channels * factor**2 % out_channels == 0
+            self.group_size = in_channels * factor**2 // out_channels
+        elif dims == 3:
+            assert in_channels * factor**3 % out_channels == 0
+            self.group_size = in_channels * factor**3 // out_channels
+        else:
+            raise ValueError("dims must be 2 or 3")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.pixel_unshuffle(x, self.factor)
-        B, C, H, W = x.shape
-        x = x.view(B, self.out_channels, self.group_size, H, W)
-        x = x.mean(dim=2)
+        if self.dims == 2:
+            x = F.pixel_unshuffle(x, self.factor)
+            B, C, H, W = x.shape
+            x = x.view(B, self.out_channels, self.group_size, H, W)
+            x = x.mean(dim=2)
+        else:
+            B, C, D, H, W = x.shape
+            f = self.factor
+            assert D % f == 0 and H % f == 0 and W % f == 0
+            x = x.view(B, C, D//f, f, H//f, f, W//f, f)
+            x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+            x = x.view(B, self.out_channels, self.group_size, D//f, H//f, W//f)
+            x = x.mean(dim=2)
         return x
 
 
@@ -648,6 +682,7 @@ class ResBlock(nn.Module):
         use_bias: bool = False,
         norm: tuple[Optional[str]] = ("bn2d", "bn2d"),
         act_func: tuple[Optional[str]] = ("relu6", None),
+        dims: int = 2
     ):
         super().__init__()
         use_bias = val2tuple(use_bias, 2)
@@ -664,6 +699,7 @@ class ResBlock(nn.Module):
             use_bias=use_bias[0],
             norm=norm[0],
             act_func=act_func[0],
+            dims=dims
         )
         self.conv2 = ConvLayer(
             mid_channels,
@@ -673,6 +709,7 @@ class ResBlock(nn.Module):
             use_bias=use_bias[1],
             norm=norm[1],
             act_func=act_func[1],
+            dims=dims
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

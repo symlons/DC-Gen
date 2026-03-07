@@ -51,6 +51,7 @@ __all__ = ["DCAE", "dc_ae_f32c32", "dc_ae_f64c128", "dc_ae_f128c512"]
 @dataclass
 class EncoderConfig:
     in_channels: int = MISSING
+    dims: int = MISSING
     latent_channels: int = MISSING
     width_list: tuple[int, ...] = (128, 256, 512, 512, 1024, 1024)
     depth_list: tuple[int, ...] = (2, 2, 2, 2, 2, 2)
@@ -70,6 +71,7 @@ class EncoderConfig:
 @dataclass
 class DecoderConfig:
     in_channels: int = MISSING
+    dims: int = MISSING
     latent_channels: int = MISSING
     in_block_type: str = "ConvLayer"
     in_shortcut: Optional[str] = "duplicating"
@@ -88,12 +90,13 @@ class DecoderConfig:
 @dataclass
 class DCAEConfig(BaseAEConfig):
     in_channels: int = 3
+    dims: int = 2
     latent_channels: int = 32
     encoder: EncoderConfig = field(
-        default_factory=lambda: EncoderConfig(in_channels="${..in_channels}", latent_channels="${..latent_channels}")
+        default_factory=lambda: EncoderConfig(in_channels="${..in_channels}", latent_channels="${..latent_channels}", dims="${..dims}")
     )
     decoder: DecoderConfig = field(
-        default_factory=lambda: DecoderConfig(in_channels="${..in_channels}", latent_channels="${..latent_channels}")
+        default_factory=lambda: DecoderConfig(in_channels="${..in_channels}", latent_channels="${..latent_channels}", dims="${..dims}")
     )
     use_quant_conv: bool = False
 
@@ -105,7 +108,7 @@ class DCAEConfig(BaseAEConfig):
 
 
 def build_block(
-    block_type: str, in_channels: int, out_channels: int, norm: Optional[str], act: Optional[str]
+    block_type: str, in_channels: int, out_channels: int, norm: Optional[str], act: Optional[str], dims: int = 2
 ) -> nn.Module:
     cfg = block_type.split("@")
     block_name = cfg[0]
@@ -119,6 +122,7 @@ def build_block(
             use_bias=(True, False),
             norm=(None, norm),
             act_func=(act, None),
+            dims=dims
         )
         block = ResidualBlock(main_block, IdentityLayer())
     elif block_name == "GLUResBlock":
@@ -188,7 +192,7 @@ def build_block(
 
 
 def build_stage_main(
-    width: int, depth: int, block_type: str | list[str], norm: str, act: str, input_width: int
+    width: int, depth: int, block_type: str | list[str], norm: str, act: str, input_width: int, dims: int = 2
 ) -> list[nn.Module]:
     assert isinstance(block_type, str) or (isinstance(block_type, list) and depth == len(block_type))
     stage = []
@@ -200,12 +204,14 @@ def build_stage_main(
             out_channels=width,
             norm=norm,
             act=act,
+            dims=dims
         )
         stage.append(block)
     return stage
 
 
-def build_downsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str]) -> nn.Module:
+def build_downsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str], dims: int = 2) -> nn.Module:
+    print("Building downsample block with block_type", block_type, "in_channels", in_channels, "out_channels", out_channels, "shortcut", shortcut, "dims", dims)
     if block_type == "Conv":
         block = ConvLayer(
             in_channels=in_channels,
@@ -215,10 +221,11 @@ def build_downsample_block(block_type: str, in_channels: int, out_channels: int,
             use_bias=True,
             norm=None,
             act_func=None,
+            dims=dims
         )
     elif block_type == "ConvPixelUnshuffle":
         block = ConvPixelUnshuffleDownSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=2
+            in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=2, dims=dims
         )
     else:
         raise ValueError(f"block_type {block_type} is not supported for downsampling")
@@ -226,7 +233,7 @@ def build_downsample_block(block_type: str, in_channels: int, out_channels: int,
         pass
     elif shortcut == "averaging":
         shortcut_block = PixelUnshuffleChannelAveragingDownSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, factor=2
+            in_channels=in_channels, out_channels=out_channels, factor=2, dims=dims
         )
         block = ResidualBlock(block, shortcut_block)
     else:
@@ -257,7 +264,7 @@ def build_upsample_block(block_type: str, in_channels: int, out_channels: int, s
     return block
 
 
-def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: int, downsample_block_type: str):
+def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: int, downsample_block_type: str, dims: int = 2):
     if factor == 1:
         block = ConvLayer(
             in_channels=in_channels,
@@ -267,10 +274,11 @@ def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: 
             use_bias=True,
             norm=None,
             act_func=None,
+            dims=dims
         )
     elif factor == 2:
         block = build_downsample_block(
-            block_type=downsample_block_type, in_channels=in_channels, out_channels=out_channels, shortcut=None
+            block_type=downsample_block_type, in_channels=in_channels, out_channels=out_channels, shortcut=None, dims=dims
         )
     else:
         raise ValueError(f"downsample factor {factor} is not supported for encoder project in")
@@ -324,7 +332,7 @@ def build_encoder_project_out_block(
     return block
 
 
-def build_decoder_project_in_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str]):
+def build_decoder_project_in_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str], dims: int = 2):
     if block_type == "ConvLayer":
         block = ConvLayer(
             in_channels=in_channels,
@@ -334,6 +342,7 @@ def build_decoder_project_in_block(block_type: str, in_channels: int, out_channe
             use_bias=True,
             norm=None,
             act_func=None,
+            dims=dims
         )
     elif block_type == "AdaptiveInputConvLayer":
         block = AdaptiveInputConvLayer(
@@ -399,20 +408,23 @@ class Encoder(nn.Module):
             isinstance(cfg.block_type, list) and len(cfg.block_type) == num_stages
         )
         assert isinstance(cfg.norm, str) or (isinstance(cfg.norm, list) and len(cfg.norm) == num_stages)
+        print("CFG.dims", cfg.dims)
 
         self.project_in = build_encoder_project_in_block(
             in_channels=cfg.in_channels,
             out_channels=cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1],
             factor=1 if cfg.depth_list[0] > 0 else 2,
             downsample_block_type=cfg.downsample_block_type,
+            dims=cfg.dims
         )
+        print("Number of out channels", cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1])
 
         self.stages: list[OpSequential] = []
         for stage_id, (width, depth) in enumerate(zip(cfg.width_list, cfg.depth_list)):
             block_type = cfg.block_type[stage_id] if isinstance(cfg.block_type, list) else cfg.block_type
             norm = cfg.norm[stage_id] if isinstance(cfg.norm, list) else cfg.norm
             stage = build_stage_main(
-                width=width, depth=depth, block_type=block_type, norm=norm, act=cfg.act, input_width=width
+                width=width, depth=depth, block_type=block_type, norm=norm, act=cfg.act, input_width=width, dims=cfg.dims
             )
 
             if stage_id < num_stages - 1 and depth > 0:
@@ -421,19 +433,20 @@ class Encoder(nn.Module):
                     in_channels=width,
                     out_channels=cfg.width_list[stage_id + 1] if cfg.downsample_match_channel else width,
                     shortcut=cfg.downsample_shortcut,
+                    dims=cfg.dims
                 )
                 stage.append(downsample_block)
             self.stages.append(OpSequential(stage))
         self.stages = nn.ModuleList(self.stages)
 
-        self.project_out = build_encoder_project_out_block(
-            block_type=cfg.out_block_type,
-            in_channels=cfg.width_list[-1],
-            out_channels=2 * cfg.latent_channels if cfg.double_latent else cfg.latent_channels,
-            norm=cfg.out_norm,
-            act=cfg.out_act,
-            shortcut=cfg.out_shortcut,
-        )
+        # self.project_out = build_encoder_project_out_block(
+        #     block_type=cfg.out_block_type,
+        #     in_channels=cfg.width_list[-1],
+        #     out_channels=2 * cfg.latent_channels if cfg.double_latent else cfg.latent_channels,
+        #     norm=cfg.out_norm,
+        #     act=cfg.out_act,
+        #     shortcut=cfg.out_shortcut,
+        # )
 
     def get_trainable_modules(self) -> nn.Module:
         trainable_modules = nn.ModuleDict({})
@@ -468,11 +481,13 @@ class Encoder(nn.Module):
         self, x: torch.Tensor, latent_channels: Optional[int | list[int]] = None
     ) -> torch.Tensor | list[torch.Tensor]:
         x = self.project_in(x)
+        print("After project_in", x.shape)
         for stage in self.stages:
             if len(stage.op_list) == 0:
                 continue
             for block in stage.op_list:
                 x = block(x)
+        print("After main stages", x.shape)
         if latent_channels is not None:
             assert isinstance(self.project_out, OpSequential) and len(self.project_out.op_list) == 1
             if isinstance(latent_channels, int):
@@ -510,6 +525,7 @@ class Decoder(nn.Module):
             in_channels=cfg.latent_channels,
             out_channels=cfg.width_list[-1],
             shortcut=cfg.in_shortcut,
+            dims=cfg.dims
         )
 
         self.stages: list[OpSequential] = []
@@ -605,11 +621,25 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
         cfg_str = (
             "latent_channels=32 "
             "in_channels=1 "
+            "dims=3 "
             "encoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
-            "decoder.norm=[bn2d,bn2d,bn2d,bn2d,bn2d,bn2d] decoder.act=[relu,relu,relu,relu,relu,relu]"
+            "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,relu,relu,relu]"
+
+        )
+        cfg_str = (
+            "latent_channels=32 "
+            "in_channels=1 "
+            # "dims=2 "
+            "dims=3 "
+            "encoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
+            "decoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
+            # "decoder.norm=[bn2d,bn2d,bn2d,bn2d,bn2d,bn2d] decoder.act=[relu,relu,relu,relu,relu,relu]"
+            "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,relu,relu,relu]"
 
         )
     elif name in ["dc-ae-f32c32-sana-1.0"]:

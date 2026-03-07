@@ -66,6 +66,7 @@ class RMSNorm2d(nn.LayerNorm):
 # register normalization function here
 REGISTERED_NORM_DICT: dict[str, type] = {
     "bn2d": nn.BatchNorm2d,
+    "bn3d": nn.BatchNorm3d,
     "ln": nn.LayerNorm,
     "ln2d": LayerNorm2d,
     "rms2d": RMSNorm2d,
