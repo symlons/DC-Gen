@@ -241,10 +241,11 @@ def build_downsample_block(block_type: str, in_channels: int, out_channels: int,
     return block
 
 
-def build_upsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str]) -> nn.Module:
+def build_upsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str], dims: int = 2) -> nn.Module:
+    print("Building upsample block with block_type", block_type, "in_channels", in_channels, "out_channels", out_channels, "shortcut", shortcut, "dims", dims)
     if block_type == "ConvPixelShuffle":
         block = ConvPixelShuffleUpSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=2
+            in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=2, dims=dims
         )
     elif block_type == "InterpolateConv":
         block = InterpolateConvUpSampleLayer(
@@ -256,7 +257,7 @@ def build_upsample_block(block_type: str, in_channels: int, out_channels: int, s
         pass
     elif shortcut == "duplicating":
         shortcut_block = ChannelDuplicatingPixelShuffleUpSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, factor=2
+            in_channels=in_channels, out_channels=out_channels, factor=2, dims=dims
         )
         block = ResidualBlock(block, shortcut_block)
     else:
@@ -292,6 +293,7 @@ def build_encoder_project_out_block(
     norm: Optional[str],
     act: Optional[str],
     shortcut: Optional[str],
+    dims: int = 2
 ):
     block = [build_norm(norm), build_act(act)]
     if block_type == "ConvLayer":
@@ -304,6 +306,7 @@ def build_encoder_project_out_block(
                 use_bias=True,
                 norm=None,
                 act_func=None,
+                dims=dims
             )
         )
     elif block_type == "AdaptiveOutputConvLayer":
@@ -324,7 +327,7 @@ def build_encoder_project_out_block(
         pass
     elif shortcut == "averaging":
         shortcut_block = PixelUnshuffleChannelAveragingDownSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, factor=1
+            in_channels=in_channels, out_channels=out_channels, factor=1, dims=dims
         )
         block = ResidualBlock(block, shortcut_block)
     else:
@@ -367,7 +370,13 @@ def build_decoder_project_in_block(block_type: str, in_channels: int, out_channe
 
 
 def build_decoder_project_out_block(
-    in_channels: int, out_channels: int, factor: int, upsample_block_type: str, norm: Optional[str], act: Optional[str]
+    in_channels: int,
+    out_channels: int,
+    factor: int,
+    upsample_block_type: str,
+    norm: Optional[str],
+    act: Optional[str],
+    dims: int = 2
 ):
     layers: list[nn.Module] = [
         build_norm(norm, in_channels),
@@ -383,12 +392,17 @@ def build_decoder_project_out_block(
                 use_bias=True,
                 norm=None,
                 act_func=None,
+                dims=dims
             )
         )
     elif factor == 2:
         layers.append(
             build_upsample_block(
-                block_type=upsample_block_type, in_channels=in_channels, out_channels=out_channels, shortcut=None
+                block_type=upsample_block_type,
+                in_channels=in_channels,
+                out_channels=out_channels,
+                shortcut=None,
+                dims=dims
             )
         )
     else:
@@ -439,14 +453,15 @@ class Encoder(nn.Module):
             self.stages.append(OpSequential(stage))
         self.stages = nn.ModuleList(self.stages)
 
-        # self.project_out = build_encoder_project_out_block(
-        #     block_type=cfg.out_block_type,
-        #     in_channels=cfg.width_list[-1],
-        #     out_channels=2 * cfg.latent_channels if cfg.double_latent else cfg.latent_channels,
-        #     norm=cfg.out_norm,
-        #     act=cfg.out_act,
-        #     shortcut=cfg.out_shortcut,
-        # )
+        self.project_out = build_encoder_project_out_block(
+            block_type=cfg.out_block_type,
+            in_channels=cfg.width_list[-1],
+            out_channels=2 * cfg.latent_channels if cfg.double_latent else cfg.latent_channels,
+            norm=cfg.out_norm,
+            act=cfg.out_act,
+            shortcut=cfg.out_shortcut,
+            dims=cfg.dims
+        )
 
     def get_trainable_modules(self) -> nn.Module:
         trainable_modules = nn.ModuleDict({})
@@ -481,13 +496,13 @@ class Encoder(nn.Module):
         self, x: torch.Tensor, latent_channels: Optional[int | list[int]] = None
     ) -> torch.Tensor | list[torch.Tensor]:
         x = self.project_in(x)
-        print("After project_in", x.shape)
+        # print("After project_in", x.shape)
         for stage in self.stages:
             if len(stage.op_list) == 0:
                 continue
             for block in stage.op_list:
                 x = block(x)
-        print("After main stages", x.shape)
+        # print("After main stages", x.shape)
         if latent_channels is not None:
             assert isinstance(self.project_out, OpSequential) and len(self.project_out.op_list) == 1
             if isinstance(latent_channels, int):
@@ -537,6 +552,7 @@ class Decoder(nn.Module):
                     in_channels=cfg.width_list[stage_id + 1],
                     out_channels=width if cfg.upsample_match_channel else cfg.width_list[stage_id + 1],
                     shortcut=cfg.upsample_shortcut,
+                    dims=cfg.dims
                 )
                 stage.append(upsample_block)
 
@@ -553,10 +569,12 @@ class Decoder(nn.Module):
                     input_width=(
                         width if cfg.upsample_match_channel else cfg.width_list[min(stage_id + 1, num_stages - 1)]
                     ),
+                    dims=cfg.dims
                 )
             )
             self.stages.insert(0, OpSequential(stage))
         self.stages = nn.ModuleList(self.stages)
+        print(self.stages)
 
         self.project_out = build_decoder_project_out_block(
             in_channels=cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1],
@@ -565,11 +583,13 @@ class Decoder(nn.Module):
             upsample_block_type=cfg.upsample_block_type,
             norm=cfg.out_norm,
             act=cfg.out_act,
+            dims=cfg.dims
         )
 
     def forward_single(self, x: torch.Tensor) -> torch.Tensor:
         x = self.project_in(x)
-        for stage in reversed(self.stages):
+        for i, stage in enumerate(reversed(self.stages)):
+            # print(f"Decoder stage {i}, input shape: {x.shape}")
             if len(stage.op_list) == 0:
                 continue
             x = stage(x)
@@ -632,14 +652,14 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
         cfg_str = (
             "latent_channels=32 "
             "in_channels=1 "
-            # "dims=2 "
-            "dims=3 "
+            "dims=2 "
+            # "dims=3 "
             "encoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
-            # "decoder.norm=[bn2d,bn2d,bn2d,bn2d,bn2d,bn2d] decoder.act=[relu,relu,relu,relu,relu,relu]"
-            "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,relu,relu,relu]"
+            "decoder.norm=[bn2d,bn2d,bn2d,bn2d,bn2d,bn2d] decoder.act=[relu,relu,relu,relu,relu,relu]"
+            # "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,relu,relu,relu]"
 
         )
     elif name in ["dc-ae-f32c32-sana-1.0"]:

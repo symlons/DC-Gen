@@ -295,10 +295,12 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
         out_channels: int,
         kernel_size: int,
         factor: int,
+        dims: int = 2
     ):
         super().__init__()
         self.factor = factor
-        out_ratio = factor**2
+        self.dims = dims
+        out_ratio = factor ** dims
         self.conv = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels * out_ratio,
@@ -306,11 +308,20 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
             use_bias=True,
             norm=None,
             act_func=None,
+            dims=dims
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
-        x = F.pixel_shuffle(x, self.factor)
+        f = self.factor
+        if self.dims == 3:
+            B, C, D, H, W = x.shape
+            C = C // (f**3)
+            x = x.view(B, C, f, f, f, D, H, W)
+            x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+            x = x.view(B, C, D*f, H*f, W*f)
+        elif self.dims == 2:
+            x = F.pixel_shuffle(x, f)
         return x
 
 
@@ -347,17 +358,27 @@ class ChannelDuplicatingPixelShuffleUpSampleLayer(nn.Module):
         in_channels: int,
         out_channels: int,
         factor: int,
+        dims: int = 2
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.factor = factor
-        assert out_channels * factor**2 % in_channels == 0
-        self.repeats = out_channels * factor**2 // in_channels
+        self.dims = dims
+        assert out_channels * factor**dims % in_channels == 0
+        self.repeats = out_channels * factor**dims // in_channels
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.repeat_interleave(self.repeats, dim=1)
-        x = F.pixel_shuffle(x, self.factor)
+        f = self.factor
+        if self.dims == 3:
+            B, C, D, H, W = x.shape
+            C = C // (f**3)
+            x = x.view(B, C, f, f, f, D, H, W)
+            x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+            x = x.view(B, C, D*f, H*f, W*f)
+        elif self.dims == 2:
+            x = F.pixel_shuffle(x, f)
         return x
 
 

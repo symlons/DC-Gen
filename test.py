@@ -8,7 +8,7 @@ model = DCAE_HF(model_name=model_name).to(dtype=torch.bfloat16, device=device)
 model.eval()
 
 # Fake 3D volume: [B, D, H, W]
-B, D, H, W = 1, 128, 512, 512
+B, D, H, W = 1, 32, 128, 128
 volume = torch.randn(B, D, H, W, dtype=torch.bfloat16, device=device)
 
 # Add channel dimension if needed: [B, C=1, D, H, W]
@@ -19,7 +19,7 @@ print("Volume.shape", volume.shape)
 # Forward pass through encoder and decoder
 with torch.no_grad():
     latent = model.encoder(volume)
-#recon = model.decoder(latent)
+recon = model.decoder(latent)
 
 print(f"Input shape: {volume.shape}")
 print(f"Latent shape: {latent.shape if isinstance(latent, torch.Tensor) else [l.shape for l in latent]}")
