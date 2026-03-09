@@ -11,6 +11,7 @@ class CTVolumeDataset(Dataset):
         self.n_slices = n_slices
         self.transform = transform
         self.index_map = []
+
         with h5py.File(self.hdf_path, "r") as f:
             for group_name in group_names:
                 if group_name not in f:
@@ -21,7 +22,12 @@ class CTVolumeDataset(Dataset):
                         self.index_map.append((group_name, key, None))
                     else:
                         total_slices = vol.shape[0] if vol.ndim == 3 else vol.shape[1]
-                        for s in range(total_slices):
+                        if self.n_slices is not None and self.n_slices < total_slices:
+                            start = (total_slices - self.n_slices) // 2
+                            end = start + self.n_slices
+                        else:
+                            start, end = 0, total_slices
+                        for s in range(start, end):
                             self.index_map.append((group_name, key, s))
 
     def __len__(self):

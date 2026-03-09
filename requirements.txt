@@ -27,4 +27,8 @@ onnxruntime
 
 nibabel
 h5py
+omegaconf
+diffusers[torch]
+wandb
+matplotlib
 git+https://github.com/THUDM/ImageReward.git
