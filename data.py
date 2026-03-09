@@ -1,7 +1,6 @@
 import h5py
 import torch
-from torch.utils.data import Dataset, DataLoader
-import os
+from torch.utils.data import Dataset
 
 class CTVolumeDataset(Dataset):
     def __init__(self, hdf_path, group_names=["Vol_full"], volume=False, n_slices=None, transform=None):
@@ -18,15 +17,17 @@ class CTVolumeDataset(Dataset):
                     raise ValueError(f"Group '{group_name}' not found in HDF5 file.")
                 for key in f[group_name].keys():
                     vol = f[group_name][key][()]
-                    if volume:
-                        self.index_map.append((group_name, key, None))
+                    total_slices = vol.shape[0] if vol.ndim == 3 else vol.shape[1]
+
+                    if self.n_slices is not None and self.n_slices < total_slices:
+                        start = (total_slices - self.n_slices) // 2
+                        end = start + self.n_slices
                     else:
-                        total_slices = vol.shape[0] if vol.ndim == 3 else vol.shape[1]
-                        if self.n_slices is not None and self.n_slices < total_slices:
-                            start = (total_slices - self.n_slices) // 2
-                            end = start + self.n_slices
-                        else:
-                            start, end = 0, total_slices
+                        start, end = 0, total_slices
+
+                    if volume:
+                        self.index_map.append((group_name, key, (start, end)))
+                    else:
                         for s in range(start, end):
                             self.index_map.append((group_name, key, s))
 
@@ -39,7 +40,8 @@ class CTVolumeDataset(Dataset):
             vol = f[group_name][key][()]
         if self.volume:
             if slice_idx is not None:
-                vol = vol[slice_idx]
+                start, end = slice_idx
+                vol = vol[start:end]
             if vol.ndim == 3:
                 vol = vol[None, ...]
         else:

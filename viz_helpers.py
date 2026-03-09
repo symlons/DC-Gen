@@ -56,33 +56,53 @@ def diff_visualization(gt, recon, save_path, title_suffix=""):
     plt.close(fig)
 
 def save_volumes(recon, batch_3d, artifact_dir, it):
+    batch_size = batch_3d.shape[0]
     depth_center = batch_3d.shape[2] // 2
-    recon_slice = to_numpy(recon[0, 0, depth_center])
-    gt_slice = to_numpy(batch_3d[0, 0, depth_center])
-    save_path = os.path.join(artifact_dir, f"central_slice_diff_iter{it}.png")
-    diff_visualization(gt_slice, recon_slice, save_path, title_suffix=f"Iter {it}")
 
-    recon_cpu = to_numpy(recon[0, 0])
-    gt_cpu = to_numpy(batch_3d[0, 0])
-    diff_cpu = np.abs(gt_cpu - recon_cpu)
+    for b in range(batch_size):
+        recon_slice = to_numpy(recon[b, 0, depth_center])
+        gt_slice = to_numpy(batch_3d[b, 0, depth_center])
 
-    nib.save(nib.Nifti1Image(recon_cpu, affine=np.eye(4)), os.path.join(artifact_dir, f"recon_iter{it}.nii.gz"))
-    nib.save(nib.Nifti1Image(gt_cpu, affine=np.eye(4)), os.path.join(artifact_dir, f"gt_iter{it}.nii.gz"))
-    nib.save(nib.Nifti1Image(diff_cpu, affine=np.eye(4)), os.path.join(artifact_dir, f"diff_iter{it}.nii.gz"))
+        save_path = os.path.join(artifact_dir, f"central_slice_diff_iter{it}_b{b}.png")
+        diff_visualization(gt_slice, recon_slice, save_path, title_suffix=f"Iter {it} B{b}")
+
+        recon_cpu = to_numpy(recon[b, 0])
+        gt_cpu = to_numpy(batch_3d[b, 0])
+        diff_cpu = np.abs(gt_cpu - recon_cpu)
+
+        nib.save(nib.Nifti1Image(recon_cpu, affine=np.eye(4)), os.path.join(artifact_dir, f"recon_iter{it}_b{b}.nii.gz"))
+        nib.save(nib.Nifti1Image(gt_cpu, affine=np.eye(4)), os.path.join(artifact_dir, f"gt_iter{it}_b{b}.nii.gz"))
+        nib.save(nib.Nifti1Image(diff_cpu, affine=np.eye(4)), os.path.join(artifact_dir, f"diff_iter{it}_b{b}.nii.gz"))
 
 def volumes_wandb(cfg, recon, gt, artifact_dir, global_step, log_images=True, batch_indices=None):
     if batch_indices is None:
         batch_indices = [0]
+
     for idx in batch_indices:
         save_volumes(recon[idx:idx+1], gt[idx:idx+1], artifact_dir, f"{global_step}_b{idx}")
+
         if log_images and cfg.wandb.enabled:
             depth_center = gt.shape[2] // 2
-            recon_slice = recon[idx, 0, depth_center].detach().cpu().float().numpy()
-            gt_slice = gt[idx, 0, depth_center].detach().cpu().float().numpy()
+            recon_slice = to_numpy(recon[idx, 0, depth_center])
+            gt_slice = to_numpy(gt[idx, 0, depth_center])
+
             save_path = os.path.join(artifact_dir, f"central_slice_diff_iter{global_step}_b{idx}.png")
             diff_visualization(gt_slice, recon_slice, save_path, title_suffix=f"Iter {global_step} B{idx}")
             wandb.log({
-                f"central_slice_diff_iter_{global_step}_b{idx}": wandb.Image(save_path),
-                f"recon_volume_iter_{global_step}_b{idx}": wandb.Video(nib.Nifti1Image(recon[idx,0].cpu().numpy(), np.eye(4)), fps=2),
-                f"gt_volume_iter_{global_step}_b{idx}": wandb.Video(nib.Nifti1Image(gt[idx,0].cpu().numpy(), np.eye(4)), fps=2)
+                f"central_slice_diff_iter_{global_step}_b{idx}": wandb.Image(save_path)
             }, step=global_step)
+
+            # Save full 3D volumes as NIfTI files
+            recon_nifti_path = os.path.join(artifact_dir, f"recon_iter{global_step}_b{idx}.nii.gz")
+            gt_nifti_path = os.path.join(artifact_dir, f"gt_iter{global_step}_b{idx}.nii.gz")
+            nib.save(nib.Nifti1Image(to_numpy(recon[idx, 0]), np.eye(4)), recon_nifti_path)
+            nib.save(nib.Nifti1Image(to_numpy(gt[idx, 0]), np.eye(4)), gt_nifti_path)
+
+            # Log them as artifacts
+            recon_artifact = wandb.Artifact(f"recon_iter{global_step}_b{idx}", type="volume")
+            recon_artifact.add_file(recon_nifti_path)
+            wandb.log_artifact(recon_artifact)
+
+            gt_artifact = wandb.Artifact(f"gt_iter{global_step}_b{idx}", type="volume")
+            gt_artifact.add_file(gt_nifti_path)
+            wandb.log_artifact(gt_artifact)

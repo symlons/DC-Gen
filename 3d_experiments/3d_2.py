@@ -39,8 +39,11 @@ def main():
     device = torch.device(cfg.training.device)
     dtype = getattr(torch, cfg.training.dtype)
 
-    os.makedirs(cfg.paths.artifact_dir, exist_ok=True)
-    os.makedirs(cfg.paths.checkpoint_dir, exist_ok=True)
+    try:
+        os.makedirs(cfg.paths.artifact_dir, exist_ok=True)
+        os.makedirs(cfg.paths.checkpoint_dir, exist_ok=True)
+    except Exception as e:
+        print(f"[WARNING] Failed to create directories: {e}")
     if cfg.wandb.enabled:
         wandb.init(project=cfg.wandb.project, name=cfg.wandb.run_name, config=OmegaConf.to_container(cfg, resolve=True))
 
@@ -54,14 +57,14 @@ def main():
         n_slices=cfg.pipeline.n_slices,
         transform=pipeline_3d
     )
-    loader_3d = DataLoader(dataset_3d, batch_size=cfg.training.batch_size, shuffle=cfg.training.shuffle_data)
+    loader_3d = DataLoader(dataset_3d, batch_size=cfg.training.batch_size, shuffle=cfg.training.shuffle_data, pin_memory=True, num_workers=8, prefetch_factor=2)
 
     model = DCAE_HF(model_name=cfg.model.name).to(dtype=dtype, device=device)
     model.train()
     model = torch.compile(model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.training.lr)
-    # global_step = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device)
+    global_step = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device)
 
     loss_history, psnr_history, ssim_history = [], [], []
     checkpoint_queue = deque()
@@ -70,13 +73,14 @@ def main():
     num_epochs = cfg.training.num_epochs
 
     for epoch in range(num_epochs):
+        print("epoch: ", epoch, "out of ", num_epochs)
+        print("dataset size: ", len(dataset_3d))
         for batch_3d in loader_3d:
             log_metrics = cfg.wandb.enabled
             save_diff = cfg.logging.save_volumes and global_step % cfg.training.diff_save_every == 0
             save_ckpt = global_step % cfg.training.checkpoint_every == 0
 
-            if batch_3d.ndim == 4: batch_3d = batch_3d.unsqueeze(1)
-            batch_3d = batch_3d.to(dtype=dtype, device=device)
+            batch_3d = batch_3d.to(dtype=dtype, device=device, non_blocking=True)
 
             latent = model.encoder(batch_3d)
             recon = model.decoder(latent)
@@ -87,9 +91,12 @@ def main():
             loss_value, psnr_value, ssim_value = evaluate_3d(recon, batch_3d, loss)
             for h, v in zip([loss_history, psnr_history, ssim_history], [loss_value, psnr_value, ssim_value]): h.append(v)
 
-            with open(log_file, "a") as f:
-                f.write(f"iter {global_step}: loss={loss.item():.6f}, PSNR={psnr_value:.6f}, SSIM={ssim_value:.6f}\n")
-                f.flush()
+            try:
+                with open(log_file, "a") as f:
+                    f.write(f"iter {global_step}: loss={loss.item():.6f}, PSNR={psnr_value:.6f}, SSIM={ssim_value:.6f}\n")
+                    f.flush()
+            except Exception as e:
+                print(f"[WARNING] Failed to write to log file {log_file}: {e}")
             print(f"Iter {global_step}: loss={loss.item():.6f}, PSNR={psnr_value:.6f}, SSIM={ssim_value:.6f}")
 
             if log_metrics:

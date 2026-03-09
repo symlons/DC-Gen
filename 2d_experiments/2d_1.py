@@ -17,11 +17,11 @@ hdf_path = "/workspace/ct_rate_train_batch_0_v13.hdf"
 batch_size = 1
 n_slices = 16
 shuffle_data = False
-model_name = "dc-ae-f32c32-in-1.0"
+model_name = "dc-ae-f32c32-in-1.0_2d"
 device = torch.device("cuda")
 dtype = torch.bfloat16
 lr = 1e-4
-num_iters = 8000
+num_iters = 20000
 diff_save_every = 500
 
 pipeline_2d = Compose([ScaleIntensity(minv=-1.0, maxv=1.0)])

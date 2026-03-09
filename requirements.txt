@@ -31,4 +31,5 @@ omegaconf
 diffusers[torch]
 wandb
 matplotlib
+monai
 git+https://github.com/THUDM/ImageReward.git
