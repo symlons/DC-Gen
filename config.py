@@ -4,7 +4,7 @@ from omegaconf import OmegaConf
 def get_default_config():
     cfg = OmegaConf.create({
         "paths": {
-            "hdf_path": "/workspace/ct_rate_train_batch_0_v13.hdf",
+            "hdf_path": "/mnt/SFS-iCxS1nYm/ct_rate_train_batch_0_v13.hdf",
             "artifact_dir": "artifacts_3d_33",
             "checkpoint_dir": "/checkpoints"
         },
@@ -12,15 +12,16 @@ def get_default_config():
             "batch_size": 128,
             "num_epochs": 2000,
             "shuffle_data": True,
-            "diff_save_every": 500,
+            "diff_save_every": 250,
             "checkpoint_every": 1000,
             "max_checkpoints": 5,
             "lr": 8e-5,
             "device": "cuda",
             "dtype": "bfloat16",
             "loss_fn": "l1",
+            "perceptual_weight": 0.25,
             "resume_from_checkpoint": False,
-            "checkpoint_path": "/workspace/DC-Gen/3d_experiments/checkpoints/checkpoint_iter4000.pt"
+            "checkpoint_path": "/mnt/SFS-iCxS1nYm/DC-Gen/3d_experiments/checkpoints/checkpoint_iter4000.pt"
         },
         "dataset": {
             "name": "CTVolume",

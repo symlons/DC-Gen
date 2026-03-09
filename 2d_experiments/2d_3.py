@@ -132,15 +132,18 @@ def main():
         n_slices=cfg.pipeline.n_slices,
         transform=pipeline_2d
     )
-    loader_2d = DataLoader(dataset_2d, batch_size=cfg.training.batch_size, shuffle=cfg.training.shuffle_data, pin_memory=True, num_workers=4, prefetch_factor=4)
+    loader_2d = DataLoader(dataset_2d, batch_size=cfg.training.batch_size, shuffle=cfg.training.shuffle_data, pin_memory=True, num_workers=4, prefetch_factor=2)
 
-    model = DCAE_HF(model_name=cfg.model.name).to(dtype=dtype, device=device)
+    # model = DCAE_HF(model_name=cfg.model.name).to(dtype=dtype, device=device)
+    model = DCAE_HF(model_name=cfg.model.name).to(device=device)  # float32
     model.train()
     model = torch.compile(model)
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.training.lr, weight_decay=1e-1) # todo: AdamW
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.training.lr, weight_decay=1e-1)
     global_step = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device)
 
-    perceptual_loss_fn = PerceptualLoss(spatial_dims=2, network_type="vgg").to(device=device, dtype=dtype)
+    # perceptual_loss_fn = PerceptualLoss(spatial_dims=2, network_type="vgg").to(device=device, dtype=dtype)
+    perceptual_loss_fn = PerceptualLoss(spatial_dims=2, network_type="vgg").to(device=device)  # float32
+
     perceptual_loss_fn.eval()
     perceptual_weight = cfg.training.get("perceptual_weight", 0.25)
     print("Using perceptual loss with weight: ", perceptual_weight)
@@ -158,13 +161,19 @@ def main():
             save_diff = cfg.logging.save_volumes and global_step % cfg.training.diff_save_every == 0
             save_ckpt = global_step % cfg.training.checkpoint_every == 0
 
-            batch_2d = batch_2d.to(dtype=dtype, device=device, non_blocking=True)
-            latent = model.encoder(batch_2d)
-            recon = model.decoder(latent)
+            # batch_2d = batch_2d.to(dtype=dtype, device=device, non_blocking=True)
+            batch_2d = batch_2d.to(device=device, non_blocking=True)
+
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                latent = model.encoder(batch_2d)
+                recon = model.decoder(latent)
+                recon_loss = loss_registry[cfg.training.loss_fn](recon, batch_2d)
 
             # loss = loss_registry[cfg.training.loss_fn](recon, batch_2d)
             recon_loss = loss_registry[cfg.training.loss_fn](recon, batch_2d)
-            perc_loss = perceptual_loss_fn(recon, batch_2d)
+            # perc_loss = perceptual_loss_fn(recon, batch_2d)
+            # loss = recon_loss + perceptual_weight * perc_loss
+            perc_loss = perceptual_loss_fn(recon.float(), batch_2d.float())
             loss = recon_loss + perceptual_weight * perc_loss
             optimizer.zero_grad(); loss.backward(); optimizer.step()
 
