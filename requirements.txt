@@ -24,4 +24,7 @@ onnx
 onnxsim
 onnxruntime
 
+
+nibabel
+h5py
 git+https://github.com/THUDM/ImageReward.git

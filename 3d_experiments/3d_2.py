@@ -67,8 +67,8 @@ def main():
         yaml_cfg = OmegaConf.load(args.config)
         cfg = OmegaConf.merge(cfg, yaml_cfg)
 
-    cfg.training.device = torch.device(cfg.training.device)
-    cfg.training.dtype = getattr(torch, cfg.training.dtype)
+    device = torch.device(cfg.training.device)
+    dtype = getattr(torch, cfg.training.dtype)
 
     os.makedirs(cfg.paths.artifact_dir, exist_ok=True)
     os.makedirs(cfg.paths.checkpoint_dir, exist_ok=True)
@@ -80,7 +80,9 @@ def main():
     dataset_3d = CTVolumeDataset(cfg.paths.hdf_path, group_names=["Vol_full"], volume=True, n_slices=cfg.pipeline.n_slices, transform=pipeline_3d)
     loader_3d = DataLoader(dataset_3d, batch_size=cfg.training.batch_size, shuffle=cfg.training.shuffle_data)
 
-    model = DCAE_HF(model_name=cfg.model.name).to(dtype=cfg.training.dtype, device=cfg.training.device)
+    model = DCAE_HF(model_name=cfg.model.name).to(dtype=dtype, device=device)
+
+
     model.train()
     model = torch.compile(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.training.lr)
@@ -90,14 +92,15 @@ def main():
     log_file = os.path.join(cfg.paths.artifact_dir, "training_log.txt")
     global_step = 0
 
-    log_metrics = cfg.wandb.enabled
-    save_diff = cfg.logging.save_volumes and global_step % cfg.training.diff_save_every == 0
-    save_ckpt = global_step % cfg.training.checkpoint_every == 0
 
     for epoch in range(cfg.training.num_iters):
         for batch_3d in loader_3d:
+            log_metrics = cfg.wandb.enabled
+            save_diff = cfg.logging.save_volumes and global_step % cfg.training.diff_save_every == 0
+            save_ckpt = global_step % cfg.training.checkpoint_every == 0
+
             if batch_3d.ndim == 4: batch_3d = batch_3d.unsqueeze(1)
-            batch_3d = batch_3d.to(dtype=cfg.training.dtype, device=cfg.training.device)
+            batch_3d = batch_3d.to(dtype=dtype, device=device)
 
             latent = model.encoder(batch_3d)
             recon = model.decoder(latent)
