@@ -75,7 +75,7 @@ class ConvLayer(nn.Module):
         norm: Optional[str] = "bn2d",
         act_func: Optional[str] = "relu",
         dims: int = 2,
-        downsample_depth: bool = True
+        isotropic: bool = True
     ):
         super(ConvLayer, self).__init__()
 
@@ -95,18 +95,7 @@ class ConvLayer(nn.Module):
                 bias=use_bias,
             )
         elif dims == 3:
-            if not downsample_depth:
-                self.conv = nn.Conv3d(
-                    in_channels,
-                    out_channels,
-                    kernel_size=(1, kernel_size, kernel_size),
-                    stride=(1, stride, stride),
-                    padding=(0, padding, padding),
-                    dilation=(1, dilation, dilation),
-                    groups=groups,
-                    bias=use_bias,
-                )
-            else:
+            if isotropic:
                 self.conv = nn.Conv3d(
                     in_channels,
                     out_channels,
@@ -114,6 +103,17 @@ class ConvLayer(nn.Module):
                     stride=(stride, stride, stride),
                     padding=(padding, padding, padding),
                     dilation=(dilation, dilation, dilation),
+                    groups=groups,
+                    bias=use_bias,
+                )
+            else:
+                self.conv = nn.Conv3d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=(1, kernel_size, kernel_size),
+                    stride=(1, stride, stride),
+                    padding=(0, padding, padding),
+                    dilation=(1, dilation, dilation),
                     groups=groups,
                     bias=use_bias,
                 )
@@ -232,12 +232,12 @@ class UpSampleLayer(nn.Module):
 
 
 class ConvPixelUnshuffleDownSampleLayer(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, factor: int, dims: int = 2, downsample_depth: bool = True):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, factor: int, dims: int = 2, downsample_depth: bool = True, isotropic: bool = True):
         super().__init__()
         self.factor = factor
         self.dims = dims
-        self.downsample_depth = downsample_depth
         out_ratio = factor ** dims
+        self.downsample_depth = downsample_depth
         assert out_channels % out_ratio == 0
         self.conv = ConvLayer(
             in_channels=in_channels,
@@ -247,7 +247,7 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
             norm=None,
             act_func=None,
             dims=dims,
-            downsample_depth=downsample_depth
+            isotropic=isotropic
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -255,10 +255,16 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
         f = self.factor
         if self.dims == 3:
             B, C, D, H, W = x.shape
-            assert D % f == 0 and H % f == 0 and W % f == 0, "All spatial dims must be divisible by factor"
-            x = x.view(B, C, D//f, f, H//f, f, W//f, f)
-            x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
-            x = x.view(B, C * f**3, D//f, H//f, W//f)
+            if self.downsample_depth:
+                assert D % f == 0 and H % f == 0 and W % f == 0
+                x = x.view(B, C, D//f, f, H//f, f, W//f, f)
+                x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+                x = x.view(B, C * f**3, D//f, H//f, W//f)
+            else:
+                assert H % f == 0 and W % f == 0
+                x = x.view(B, C, D, H//f, f, W//f, f)
+                x = x.permute(0, 1, 2, 4, 6, 3, 5).contiguous()
+                x = x.view(B, C * f**2, D, H//f, W//f)
         else:
             x = F.pixel_unshuffle(x, f)
         return x
@@ -269,19 +275,22 @@ class PixelUnshuffleChannelAveragingDownSampleLayer(nn.Module):
         in_channels: int,
         out_channels: int,
         factor: int,
-        dims: int
+        dims: int,
+        downsample_depth: bool = True,
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.factor = factor
         self.dims = dims
+        self.downsample_depth = downsample_depth
         if dims == 2:
             assert in_channels * factor**2 % out_channels == 0
             self.group_size = in_channels * factor**2 // out_channels
         elif dims == 3:
-            assert in_channels * factor**3 % out_channels == 0
-            self.group_size = in_channels * factor**3 // out_channels
+            spatial_factor = factor**3 if downsample_depth else factor**2
+            assert in_channels * spatial_factor % out_channels == 0
+            self.group_size = in_channels * spatial_factor // out_channels
         else:
             raise ValueError("dims must be 2 or 3")
 
@@ -294,11 +303,18 @@ class PixelUnshuffleChannelAveragingDownSampleLayer(nn.Module):
         else:
             B, C, D, H, W = x.shape
             f = self.factor
-            assert D % f == 0 and H % f == 0 and W % f == 0
-            x = x.view(B, C, D//f, f, H//f, f, W//f, f)
-            x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
-            x = x.view(B, self.out_channels, self.group_size, D//f, H//f, W//f)
-            x = x.mean(dim=2)
+            if self.downsample_depth:
+                assert D % f == 0 and H % f == 0 and W % f == 0
+                x = x.view(B, C, D//f, f, H//f, f, W//f, f)
+                x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+                x = x.view(B, self.out_channels, self.group_size, D//f, H//f, W//f)
+                x = x.mean(dim=2)
+            else:
+                assert H % f == 0 and W % f == 0
+                x = x.view(B, C, D, H//f, f, W//f, f)
+                x = x.permute(0, 1, 2, 4, 6, 3, 5).contiguous()
+                x = x.view(B, self.out_channels, self.group_size, D, H//f, W//f)
+                x = x.mean(dim=2)
         return x
 
 
@@ -309,12 +325,17 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
         out_channels: int,
         kernel_size: int,
         factor: int,
-        dims: int = 2
+        dims: int = 2,
+        isotropic: bool = True
     ):
         super().__init__()
         self.factor = factor
         self.dims = dims
-        out_ratio = factor ** dims
+        self.isotropic = isotropic
+        if dims == 3:
+            out_ratio = factor ** 3 if isotropic else factor ** 2
+        else:
+            out_ratio = factor ** 2
         self.conv = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels * out_ratio,
@@ -322,7 +343,8 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
             use_bias=True,
             norm=None,
             act_func=None,
-            dims=dims
+            dims=dims,
+            isotropic=isotropic,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -330,10 +352,16 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
         f = self.factor
         if self.dims == 3:
             B, C, D, H, W = x.shape
-            C = C // (f**3)
-            x = x.view(B, C, f, f, f, D, H, W)
-            x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
-            x = x.view(B, C, D*f, H*f, W*f)
+            if self.isotropic:
+                C = C // (f**3)
+                x = x.view(B, C, f, f, f, D, H, W)
+                x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+                x = x.view(B, C, D*f, H*f, W*f)
+            else:
+                C = C // (f**2)
+                x = x.view(B, C, f, f, D, H, W)
+                x = x.permute(0, 1, 4, 5, 2, 6, 3).contiguous()
+                x = x.view(B, C, D, H*f, W*f)
         elif self.dims == 2:
             x = F.pixel_shuffle(x, f)
         return x
@@ -372,25 +400,37 @@ class ChannelDuplicatingPixelShuffleUpSampleLayer(nn.Module):
         in_channels: int,
         out_channels: int,
         factor: int,
-        dims: int = 2
+        dims: int = 2,
+        isotropic: bool = True,
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.factor = factor
         self.dims = dims
-        assert out_channels * factor**dims % in_channels == 0
-        self.repeats = out_channels * factor**dims // in_channels
+        self.isotropic = isotropic
+        if dims == 3:
+            spatial_factor = factor**3 if isotropic else factor**2
+        else:
+            spatial_factor = factor**2
+        assert out_channels * spatial_factor % in_channels == 0
+        self.repeats = out_channels * spatial_factor // in_channels
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.repeat_interleave(self.repeats, dim=1)
         f = self.factor
         if self.dims == 3:
             B, C, D, H, W = x.shape
-            C = C // (f**3)
-            x = x.view(B, C, f, f, f, D, H, W)
-            x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
-            x = x.view(B, C, D*f, H*f, W*f)
+            if self.isotropic:
+                C = C // (f**3)
+                x = x.view(B, C, f, f, f, D, H, W)
+                x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+                x = x.view(B, C, D*f, H*f, W*f)
+            else:
+                C = C // (f**2)
+                x = x.view(B, C, f, f, D, H, W)
+                x = x.permute(0, 1, 4, 5, 2, 6, 3).contiguous()
+                x = x.view(B, C, D, H*f, W*f)
         elif self.dims == 2:
             x = F.pixel_shuffle(x, f)
         return x
@@ -717,7 +757,8 @@ class ResBlock(nn.Module):
         use_bias: bool = False,
         norm: tuple[Optional[str]] = ("bn2d", "bn2d"),
         act_func: tuple[Optional[str]] = ("relu6", None),
-        dims: int = 2
+        dims: int = 2,
+        isotropic: bool = True
     ):
         super().__init__()
         use_bias = val2tuple(use_bias, 2)
@@ -734,7 +775,8 @@ class ResBlock(nn.Module):
             use_bias=use_bias[0],
             norm=norm[0],
             act_func=act_func[0],
-            dims=dims
+            dims=dims,
+            isotropic=isotropic
         )
         self.conv2 = ConvLayer(
             mid_channels,
@@ -744,7 +786,8 @@ class ResBlock(nn.Module):
             use_bias=use_bias[1],
             norm=norm[1],
             act_func=act_func[1],
-            dims=dims
+            dims=dims,
+            isotropic=isotropic
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
