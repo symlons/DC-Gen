@@ -1,3 +1,11 @@
+[project]
+name = "dc-gen"
+version = "0.1.0"
+dependencies = [
+    "monai>=1.5.2",
+]
+
+
 [tool.black]
 line-length = 120
 include = '\.pyi?$'

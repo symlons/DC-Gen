@@ -4,42 +4,73 @@ import os
 import wandb
 import glob
 
+import numpy as np
+import matplotlib.pyplot as plt
+import torch
+
 def to_numpy(tensor):
     return tensor.detach().cpu().float().numpy()
 
-def save_checkpoint(cfg, model, optimizer, artifact_dir, it, checkpoint_queue, max_checkpoints):
-    os.makedirs(artifact_dir, exist_ok=True)
-    ckpt_path = os.path.join(artifact_dir, f"checkpoint_iter{it}.pt")
-    torch.save({
-        'global_step': it,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict()
-    }, ckpt_path)
-    if cfg.wandb.enabled:
-        wandb.save(ckpt_path)
-    checkpoint_queue.append(ckpt_path)
-    while len(checkpoint_queue) > max_checkpoints:
-        old_ckpt = checkpoint_queue.popleft()
-        if os.path.exists(old_ckpt):
-            os.remove(old_ckpt)
+def ensure_numpy(x):
+    import numpy as np
+    import torch
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().to(torch.float32).numpy()
+    return np.array(x)
 
-def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device):
-    if not getattr(cfg.training, "resume_from_checkpoint", False):
-        return 0
+def ensure_batch(x):
+    if x.ndim == 2:
+        return x[np.newaxis, ...]
+    return x
 
-    user_ckpt = getattr(cfg.training, "resume_from_checkpoint_path", None)
-    if user_ckpt and os.path.exists(user_ckpt):
-        ckpt_path = user_ckpt
-    else:
-        checkpoint_files = sorted(glob.glob(os.path.join(checkpoint_dir, "checkpoint_iter*.pt")))
-        if not checkpoint_files:
-            print("no checkpoints found, starting from scratch")
-            return 0
-        ckpt_path = checkpoint_files[-1]
+def compute_map(gt, recon, map_fn=None):
+    if map_fn:
+        return map_fn(gt, recon)
+    return gt - recon
 
-    ckpt = torch.load(ckpt_path, map_location=device)
-    model.load_state_dict(ckpt["model_state_dict"])
-    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-    global_step = ckpt.get("global_step", ckpt.get("iteration", 0))
-    print(f"resumed from checkpoint {ckpt_path} at global_step {global_step}")
-    return global_step
+def get_plot_range(data, symmetric=False):
+    if symmetric:
+        abs_max = max(np.max(np.abs(data)), 1e-8)
+        return -abs_max, abs_max
+    return data.min(), data.max()
+
+def plot_batch(batch_data, titles=None, cmaps=None, vmin_vmax=None):
+    B = len(batch_data)
+    cols = len(batch_data[0])
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(B, cols, figsize=(5*cols, 5*B), constrained_layout=True)
+    if B == 1:
+        axes = np.expand_dims(axes, axis=0)
+
+    for i in range(B):
+        for j in range(cols):
+            axes[i, j].imshow(batch_data[i][j], cmap=cmaps[j], **vmin_vmax[j])
+            axes[i, j].axis('off')
+            if titles:
+                axes[i, j].set_title(titles[i][j])
+    return fig, axes
+
+def save_figure(fig, save_path, im_for_colorbar=None, label=None):
+    if im_for_colorbar is not None:
+        fig.colorbar(im_for_colorbar, ax=fig.axes, location='right', shrink=0.85, pad=0.02, label=label)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+
+def batch_statistics(batch):
+    batch_np = batch.detach().cpu().numpy() if isinstance(batch, torch.Tensor) else batch
+    B = batch_np.shape[0]
+
+    sample_stats = [(batch_np[i].min(), batch_np[i].max(), batch_np[i].mean(), batch_np[i].std()) for i in range(B)]
+    for i, stats in enumerate(sample_stats):
+        print(f"Sample {i}: min={stats[0]:.3f}, max={stats[1]:.3f}, mean={stats[2]:.3f}, std={stats[3]:.3f}")
+
+    overall = (batch_np.min(), batch_np.max(), batch_np.mean(), batch_np.std())
+    print(f"Batch overall: min={overall[0]:.3f}, max={overall[1]:.3f}, mean={overall[2]:.3f}, std={overall[3]:.3f}")
+    return sample_stats, overall
+
+
+def get_autocast_ctx(cfg, device):
+    if cfg.training.use_autocast:
+        return torch.autocast(device_type=device.type, dtype=torch.bfloat16)
+    return nullcontext()
