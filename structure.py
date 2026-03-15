@@ -1,6 +1,4 @@
 import argparse
-import contextlib
-from contextlib import nullcontext
 from collections import deque
 import os
 
@@ -14,8 +12,8 @@ from registry import dataset_registry, loss_registry
 from dc_gen.ae_model_zoo import DCAE_HF
 from checkpointing import load_checkpoint, save_checkpoint
 from evaluation import evaluate
-from config import Config, load_config
-from multigpu import main_process_only, is_main_process, init_distributed, cleanup
+from config import load_config
+from multigpu import main_process_only, init_distributed, cleanup
 from viz import Visualize
 from basics import get_autocast_ctx
 
@@ -63,7 +61,7 @@ def main_worker(rank: int, world_size: int, cfg):
 
     loss_history, psnr_history, ssim_history = [], [], []
     checkpoint_queue = deque()
-    log_file = os.path.join(cfg.paths.artifact_dir, "training_log.txt")
+    log_file = os.path.join(cfg.paths.save_dir, "training_log.txt")
     num_epochs = cfg.training.num_epochs
 
     for epoch in range(num_epochs):
@@ -98,7 +96,7 @@ def main_worker(rank: int, world_size: int, cfg):
                     print(f"[WARNING] Failed to write to log file {log_file}: {e}")
 
                 print(f"Iter {global_step}: loss={loss.item():.6f}, " f"PSNR={psnr_value:.6f}, SSIM={ssim_value:.6f}")
-                if save_diff: viz.save(batch, recon, save_dir=cfg.save_dir)
+                if save_diff: viz.save(batch, recon, save_dir=cfg.paths.save_dir)
                 if log_metrics: wandb.log({"loss": loss.item(), "PSNR": psnr_value, "SSIM": ssim_value}, step=global_step)
                 if save_ckpt: save_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, global_step, checkpoint_queue, cfg.training.max_checkpoints)
 

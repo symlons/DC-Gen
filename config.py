@@ -6,7 +6,7 @@ def get_default_config():
         "paths": {
             # "hdf_path": "/mnt/SFS-iCxS1nYm/ct_rate_train_batch_0_v13.hdf",
             "hdf_path": "/data/ct_rate_train_batch_0_v13.hdf",
-            "artifact_dir": "artifacts_3d_33",
+            "save_dir": "artifacts_3d_33",
             "checkpoint_dir": "/data/checkpoints"
         },
         "training": {
@@ -51,7 +51,7 @@ class DatasetConfig:
 class PathsConfig:
     hdf_path: str = "/Users/sfkost/storage/ct_rate_train_batch_0_v13.hdf"
     checkpoint_dir: str = "/Users/sfkost/storage/fun"
-    artifact_dir: str = "/Users/sfkost/storage/fun"
+    save_dir: str = "/Users/sfkost/storage/fun"
 
 @dataclass
 class PipelineConfig:
@@ -71,7 +71,7 @@ class TrainingConfig:
     num_workers: int = 0
     pin_memory: bool = False
     prefetch_factor: Optional[int] = None
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    device: str = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     dtype: str = "float32"
     resume_from_checkpoint: bool = False
     checkpoint_every: int = 100
@@ -97,7 +97,6 @@ class LoggingConfig:
 @dataclass
 class Config:
     dims: str = "2d"
-    save_dir: str = "/Users/sfkost/storage/fun/"
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)

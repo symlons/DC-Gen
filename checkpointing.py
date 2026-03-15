@@ -4,9 +4,9 @@ from collections import deque
 import torch
 import wandb
 
-def save_checkpoint(cfg, model, optimizer, artifact_dir, it, checkpoint_queue: deque, max_checkpoints: int):
-    os.makedirs(artifact_dir, exist_ok=True)
-    ckpt_path = os.path.join(artifact_dir, f"checkpoint_iter{it}.pt")
+def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque, max_checkpoints: int):
+    os.makedirs(save_dir, exist_ok=True)
+    ckpt_path = os.path.join(save_dir, f"checkpoint_iter{it}.pt")
 
     checkpoint = {
         'global_step': it,

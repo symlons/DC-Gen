@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 import torch
 import torch.nn as nn
@@ -66,6 +66,7 @@ class EncoderConfig:
     out_block_type: str = "ConvLayer"
     out_shortcut: Optional[str] = "averaging"
     double_latent: bool = False
+    downsample_depth: List[bool] = (True, True, True, True, True, True)
 
 
 @dataclass
@@ -210,8 +211,8 @@ def build_stage_main(
     return stage
 
 
-def build_downsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str], dims: int = 2) -> nn.Module:
-    print("Building downsample block with block_type", block_type, "in_channels", in_channels, "out_channels", out_channels, "shortcut", shortcut, "dims", dims)
+def build_downsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str], dims: int = 2, downsample_depth: bool = True) -> nn.Module:
+    # print("Building downsample block with block_type", block_type, "in_channels", in_channels, "out_channels", out_channels, "shortcut", shortcut, "dims", dims, "downsample_depth", downsample_depth)
     if block_type == "Conv":
         block = ConvLayer(
             in_channels=in_channels,
@@ -221,11 +222,12 @@ def build_downsample_block(block_type: str, in_channels: int, out_channels: int,
             use_bias=True,
             norm=None,
             act_func=None,
-            dims=dims
+            dims=dims,
+            downsample_depth=downsample_depth
         )
     elif block_type == "ConvPixelUnshuffle":
         block = ConvPixelUnshuffleDownSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=2, dims=dims
+            in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=2, dims=dims, downsample_depth=downsample_depth
         )
     else:
         raise ValueError(f"block_type {block_type} is not supported for downsampling")
@@ -242,7 +244,7 @@ def build_downsample_block(block_type: str, in_channels: int, out_channels: int,
 
 
 def build_upsample_block(block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str], dims: int = 2) -> nn.Module:
-    print("Building upsample block with block_type", block_type, "in_channels", in_channels, "out_channels", out_channels, "shortcut", shortcut, "dims", dims)
+    # print("Building upsample block with block_type", block_type, "in_channels", in_channels, "out_channels", out_channels, "shortcut", shortcut, "dims", dims)
     if block_type == "ConvPixelShuffle":
         block = ConvPixelShuffleUpSampleLayer(
             in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=2, dims=dims
@@ -265,7 +267,7 @@ def build_upsample_block(block_type: str, in_channels: int, out_channels: int, s
     return block
 
 
-def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: int, downsample_block_type: str, dims: int = 2):
+def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: int, downsample_block_type: str, dims: int = 2, downsample_depth: bool = True):
     if factor == 1:
         block = ConvLayer(
             in_channels=in_channels,
@@ -275,11 +277,12 @@ def build_encoder_project_in_block(in_channels: int, out_channels: int, factor: 
             use_bias=True,
             norm=None,
             act_func=None,
-            dims=dims
+            dims=dims,
+            downsample_depth=downsample_depth
         )
     elif factor == 2:
         block = build_downsample_block(
-            block_type=downsample_block_type, in_channels=in_channels, out_channels=out_channels, shortcut=None, dims=dims
+            block_type=downsample_block_type, in_channels=in_channels, out_channels=out_channels, shortcut=None, dims=dims, downsample_depth=downsample_depth
         )
     else:
         raise ValueError(f"downsample factor {factor} is not supported for encoder project in")
@@ -422,16 +425,17 @@ class Encoder(nn.Module):
             isinstance(cfg.block_type, list) and len(cfg.block_type) == num_stages
         )
         assert isinstance(cfg.norm, str) or (isinstance(cfg.norm, list) and len(cfg.norm) == num_stages)
-        print("CFG.dims", cfg.dims)
+        # print("CFG.dims", cfg.dims)
 
         self.project_in = build_encoder_project_in_block(
             in_channels=cfg.in_channels,
             out_channels=cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1],
             factor=1 if cfg.depth_list[0] > 0 else 2,
             downsample_block_type=cfg.downsample_block_type,
-            dims=cfg.dims
+            dims=cfg.dims,
+            downsample_depth=cfg.downsample_depth[0]
         )
-        print("Number of out channels", cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1])
+        # print("Number of out channels", cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1])
 
         self.stages: list[OpSequential] = []
         for stage_id, (width, depth) in enumerate(zip(cfg.width_list, cfg.depth_list)):
@@ -574,7 +578,6 @@ class Decoder(nn.Module):
             )
             self.stages.insert(0, OpSequential(stage))
         self.stages = nn.ModuleList(self.stages)
-        print(self.stages)
 
         self.project_out = build_decoder_project_out_block(
             in_channels=cfg.width_list[0] if cfg.depth_list[0] > 0 else cfg.width_list[1],
@@ -653,6 +656,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "latent_channels=32 "
             "in_channels=1 "
             # "dims=2 "
+            # "encoder.downsample_depth=[False] "
             "dims=3 "
             "encoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "

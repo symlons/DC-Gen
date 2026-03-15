@@ -74,7 +74,8 @@ class ConvLayer(nn.Module):
         dropout: float = 0,
         norm: Optional[str] = "bn2d",
         act_func: Optional[str] = "relu",
-        dims: int = 2
+        dims: int = 2,
+        downsample_depth: bool = True
     ):
         super(ConvLayer, self).__init__()
 
@@ -94,16 +95,29 @@ class ConvLayer(nn.Module):
                 bias=use_bias,
             )
         elif dims == 3:
-            self.conv = nn.Conv3d(
-                in_channels,
-                out_channels,
-                kernel_size=(kernel_size, kernel_size, kernel_size),
-                stride=(stride, stride, stride),
-                padding=padding,
-                dilation=(dilation, dilation, dilation),
-                groups=groups,
-                bias=use_bias,
-            )
+            if not downsample_depth:
+                self.conv = nn.Conv3d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=(1, kernel_size, kernel_size),
+                    stride=(1, stride, stride),
+                    padding=(0, padding, padding),
+                    dilation=(1, dilation, dilation),
+                    groups=groups,
+                    bias=use_bias,
+                )
+            else:
+                self.conv = nn.Conv3d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=(kernel_size, kernel_size, kernel_size),
+                    stride=(stride, stride, stride),
+                    padding=(padding, padding, padding),
+                    dilation=(dilation, dilation, dilation),
+                    groups=groups,
+                    bias=use_bias,
+                )
+
         self.norm = build_norm(norm, num_features=out_channels)
         self.act = build_act(act_func)
 
@@ -116,7 +130,6 @@ class ConvLayer(nn.Module):
         if self.act:
             x = self.act(x)
         return x
-
 
 class AdaptiveOutputConvLayer(nn.Module):
     def __init__(
@@ -219,10 +232,11 @@ class UpSampleLayer(nn.Module):
 
 
 class ConvPixelUnshuffleDownSampleLayer(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, factor: int, dims: int = 2):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, factor: int, dims: int = 2, downsample_depth: bool = True):
         super().__init__()
         self.factor = factor
         self.dims = dims
+        self.downsample_depth = downsample_depth
         out_ratio = factor ** dims
         assert out_channels % out_ratio == 0
         self.conv = ConvLayer(
@@ -232,7 +246,8 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
             use_bias=True,
             norm=None,
             act_func=None,
-            dims=dims
+            dims=dims,
+            downsample_depth=downsample_depth
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -247,7 +262,6 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
         else:
             x = F.pixel_unshuffle(x, f)
         return x
-
 
 class PixelUnshuffleChannelAveragingDownSampleLayer(nn.Module):
     def __init__(
