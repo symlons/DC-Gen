@@ -29,7 +29,7 @@ def get_default_config():
             "group_names": ["Vol_full"],
             "volume": True
         },
-        "model": {"name": "dc-ae-f32c32-in-1.0_2d"},
+        "model": {"name": "dc-ae-f32c32-in-1.0"},
         "pipeline": {"n_slices": 32, "resize_hw": [128, 128]},
         "wandb": {"enabled": False, "project": "ct_recon", "run_name": "dc_ae_experiment"},
         "logging": {"save_volumes": True, "save_training_curves": True}
@@ -47,16 +47,22 @@ class DatasetConfig:
     group_names: List[str] = field(default_factory=lambda: ["Vol_full"])
     volume: Optional[str] = None
 
+# @dataclass
+# class PathsConfig:
+#     hdf_path: str = "/Users/sfkost/storage/ct_rate_train_batch_0_v13.hdf"
+#     checkpoint_dir: str = "/Users/sfkost/storage/fun"
+#     save_dir: str = "/Users/sfkost/storage/fun"
+
 @dataclass
 class PathsConfig:
-    hdf_path: str = "/Users/sfkost/storage/ct_rate_train_batch_0_v13.hdf"
-    checkpoint_dir: str = "/Users/sfkost/storage/fun"
-    save_dir: str = "/Users/sfkost/storage/fun"
+    hdf_path: str = "/mnt/Volume-eV4BofCN/ct_rate_train_batch_0_v13.hdf"
+    checkpoint_dir: str = "/checkpoints"
+    save_dir: str = "/mnt/Volume-eV4BofCN/artifacts_3d_33"
 
 @dataclass
 class PipelineConfig:
-    resize_hw: List[int] = field(default_factory=lambda: [256, 256])
-    n_slices: Optional[int] = None
+    resize_hw: List[Optional[int]] = field(default_factory=lambda: [None, 32, 32])
+    n_slices: Optional[int] = 32
 
 @dataclass
 class ObjectiveConfig:
@@ -66,7 +72,7 @@ class ObjectiveConfig:
 @dataclass
 class TrainingConfig:
     num_epochs: int = 5
-    batch_size: int = 1
+    batch_size: int = 2
     shuffle_data: bool = False
     num_workers: int = 0
     pin_memory: bool = False
@@ -74,29 +80,29 @@ class TrainingConfig:
     device: str = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     dtype: str = "float32"
     resume_from_checkpoint: bool = False
-    checkpoint_every: int = 100
+    checkpoint_every: int = 1000
     max_checkpoints: int = 4
     use_autocast: bool = True
 
 @dataclass
 class HParamsConfig:
-    learning_rate: float = 1e-5
+    learning_rate: float = 4e-6
     weight_decay: float = 1e-2
 
 @dataclass
 class ModelConfig:
-    name: str = "dc-ae-f32c32-in-1.0_2d"
+    name: str = "dc-ae-f32c32-in-1.0"
     compile: bool = True
 
 @dataclass
 class LoggingConfig:
-    wandb: bool = False
+    wandb: bool = True
     save_volumes: bool = True
-    viz_every: int = 100
+    viz_every: int = 500
 
 @dataclass
 class Config:
-    dims: str = "2d"
+    dims: str = "3d"
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
@@ -112,4 +118,3 @@ def load_config(yaml_path: str = None):
         yaml_cfg = OmegaConf.load(yaml_path)
         cfg = OmegaConf.merge(cfg, yaml_cfg)
     return cfg
-

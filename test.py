@@ -6,6 +6,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model_name = "dc-ae-f32c32-in-1.0"
 model = DCAE_HF(model_name=model_name).to(dtype=torch.bfloat16, device=device)
 model.eval()
+print(model)
 
 # Fake 3D volume: [B, D, H, W]
 B, D, H, W = 1, 32, 64, 64

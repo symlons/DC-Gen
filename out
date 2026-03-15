@@ -1,0 +1,276 @@
+DCAE_HF(
+  (encoder): Encoder(
+    (project_in): ConvPixelUnshuffleDownSampleLayer(
+      (conv): ConvLayer(
+        (conv): Conv3d(1, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+      )
+    )
+    (stages): ModuleList(
+      (0): OpSequential(
+        (op_list): ModuleList()
+      )
+      (1): OpSequential(
+        (op_list): ModuleList(
+          (0-3): 4 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(256, 256, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): SiLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(256, 256, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+          (4): ResidualBlock(
+            (main): ConvPixelUnshuffleDownSampleLayer(
+              (conv): ConvLayer(
+                (conv): Conv3d(256, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+              )
+            )
+            (shortcut): PixelUnshuffleChannelAveragingDownSampleLayer()
+          )
+        )
+      )
+      (2): OpSequential(
+        (op_list): ModuleList(
+          (0-7): 8 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): SiLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+          (8): ResidualBlock(
+            (main): ConvPixelUnshuffleDownSampleLayer(
+              (conv): ConvLayer(
+                (conv): Conv3d(512, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+              )
+            )
+            (shortcut): PixelUnshuffleChannelAveragingDownSampleLayer()
+          )
+        )
+      )
+      (3): OpSequential(
+        (op_list): ModuleList(
+          (0-1): 2 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): SiLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+          (2): ResidualBlock(
+            (main): ConvPixelUnshuffleDownSampleLayer(
+              (conv): ConvLayer(
+                (conv): Conv3d(512, 128, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+              )
+            )
+            (shortcut): PixelUnshuffleChannelAveragingDownSampleLayer()
+          )
+        )
+      )
+      (4): OpSequential(
+        (op_list): ModuleList(
+          (0-1): 2 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(1024, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): SiLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(1024, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+          (2): ResidualBlock(
+            (main): ConvPixelUnshuffleDownSampleLayer(
+              (conv): ConvLayer(
+                (conv): Conv3d(1024, 128, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+              )
+            )
+            (shortcut): PixelUnshuffleChannelAveragingDownSampleLayer()
+          )
+        )
+      )
+      (5): OpSequential(
+        (op_list): ModuleList(
+          (0-1): 2 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(1024, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): SiLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(1024, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+        )
+      )
+    )
+    (project_out): ResidualBlock(
+      (main): OpSequential(
+        (op_list): ModuleList(
+          (0): ConvLayer(
+            (conv): Conv3d(1024, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+          )
+        )
+      )
+      (shortcut): PixelUnshuffleChannelAveragingDownSampleLayer()
+    )
+  )
+  (decoder): Decoder(
+    (project_in): ResidualBlock(
+      (main): ConvLayer(
+        (conv): Conv3d(32, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+      )
+      (shortcut): ChannelDuplicatingPixelShuffleUpSampleLayer()
+    )
+    (stages): ModuleList(
+      (0): OpSequential(
+        (op_list): ModuleList()
+      )
+      (1): OpSequential(
+        (op_list): ModuleList(
+          (0): ResidualBlock(
+            (main): ConvPixelShuffleUpSampleLayer(
+              (conv): ConvLayer(
+                (conv): Conv3d(512, 2048, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+              )
+            )
+            (shortcut): ChannelDuplicatingPixelShuffleUpSampleLayer()
+          )
+          (1-5): 5 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(256, 256, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): ReLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(256, 256, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+                (norm): BatchNorm3d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+        )
+      )
+      (2): OpSequential(
+        (op_list): ModuleList(
+          (0): ResidualBlock(
+            (main): ConvPixelShuffleUpSampleLayer(
+              (conv): ConvLayer(
+                (conv): Conv3d(512, 4096, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+              )
+            )
+            (shortcut): ChannelDuplicatingPixelShuffleUpSampleLayer()
+          )
+          (1-10): 10 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): ReLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+                (norm): BatchNorm3d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+        )
+      )
+      (3): OpSequential(
+        (op_list): ModuleList(
+          (0): ResidualBlock(
+            (main): ConvPixelShuffleUpSampleLayer(
+              (conv): ConvLayer(
+                (conv): Conv3d(1024, 4096, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+              )
+            )
+            (shortcut): ChannelDuplicatingPixelShuffleUpSampleLayer()
+          )
+          (1-2): 2 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): ReLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(512, 512, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+                (norm): BatchNorm3d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+        )
+      )
+      (4): OpSequential(
+        (op_list): ModuleList(
+          (0): ResidualBlock(
+            (main): ConvPixelShuffleUpSampleLayer(
+              (conv): ConvLayer(
+                (conv): Conv3d(1024, 8192, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+              )
+            )
+            (shortcut): ChannelDuplicatingPixelShuffleUpSampleLayer()
+          )
+          (1-2): 2 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(1024, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): ReLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(1024, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+                (norm): BatchNorm3d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+        )
+      )
+      (5): OpSequential(
+        (op_list): ModuleList(
+          (0-1): 2 x ResidualBlock(
+            (main): ResBlock(
+              (conv1): ConvLayer(
+                (conv): Conv3d(1024, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+                (act): ReLU()
+              )
+              (conv2): ConvLayer(
+                (conv): Conv3d(1024, 1024, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
+                (norm): BatchNorm3d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              )
+            )
+            (shortcut): IdentityLayer()
+          )
+        )
+      )
+    )
+    (project_out): OpSequential(
+      (op_list): ModuleList(
+        (0): ReLU()
+        (1): ConvPixelShuffleUpSampleLayer(
+          (conv): ConvLayer(
+            (conv): Conv3d(256, 8, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
+          )
+        )
+      )
+    )
+  )
+)

@@ -51,7 +51,8 @@ def main_worker(rank: int, world_size: int, cfg):
     if use_cuda and world_size > 1: model = wrap_ddp(model, device, rank, world_size)
     model.train()
 
-    perceptual_loss_fn = PerceptualLoss(spatial_dims=2, network_type="vgg").to(device=device)
+    if cfg.dims == "3d": perceptual_loss_fn = PerceptualLoss(spatial_dims=3, network_type="vgg", is_fake_3d=True).to(device=device)
+    elif cfg.dims == "2d": perceptual_loss_fn = PerceptualLoss( spatial_dims=2, network_type="vgg").to(device=device)
     perceptual_loss_fn.eval()
     perceptual_weight = cfg.objective.perceptual_weight
 
@@ -61,6 +62,7 @@ def main_worker(rank: int, world_size: int, cfg):
 
     loss_history, psnr_history, ssim_history = [], [], []
     checkpoint_queue = deque()
+    os.makedirs(cfg.paths.save_dir, exist_ok=True)
     log_file = os.path.join(cfg.paths.save_dir, "training_log.txt")
     num_epochs = cfg.training.num_epochs
 
@@ -72,6 +74,7 @@ def main_worker(rank: int, world_size: int, cfg):
             print(f"dataset size: {len(dataset)}")
 
         for batch in loader:
+            print(batch.shape)
             log_metrics = cfg.logging.wandb
             save_diff = cfg.logging.save_volumes and global_step % cfg.logging.viz_every == 0
             save_ckpt = global_step % cfg.training.checkpoint_every == 0

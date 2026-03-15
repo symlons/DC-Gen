@@ -517,13 +517,13 @@ class Encoder(nn.Module):
         self, x: torch.Tensor, latent_channels: Optional[int | list[int]] = None
     ) -> torch.Tensor | list[torch.Tensor]:
         x = self.project_in(x)
-        print("After project_in", x.shape)
+        # print("After project_in", x.shape)
         for stage in self.stages:
             if len(stage.op_list) == 0:
                 continue
             for block in stage.op_list:
                 x = block(x)
-        print("After main stages", x.shape)
+        # print("After main stages", x.shape)
         if latent_channels is not None:
             assert isinstance(self.project_out, OpSequential) and len(self.project_out.op_list) == 1
             if isinstance(latent_channels, int):
