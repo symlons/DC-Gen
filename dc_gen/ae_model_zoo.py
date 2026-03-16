@@ -39,6 +39,8 @@ __all__ = ["create_dc_ae_model_cfg", "DCAE_HF", "AutoencoderKL"]
 REGISTERED_DCAE_MODEL: dict[str, tuple[Callable, Optional[str], Optional[str]]] = {
     "dc-ae-f32c32-in-1.0": (dc_ae_f32c32, None, "mit-han-lab"),
     "dc-ae-f32c32-in-1.0_2d": (dc_ae_f32c32, None, "mit-han-lab"),
+    "dc-ae-f32c32-in-1.0_3d": (dc_ae_f32c32, None, "mit-han-lab"),
+    "dc-ae-f32c32-in-1.0_3d-depth-last": (dc_ae_f32c32, None, "mit-han-lab"),
     "dc-ae-f64c128-in-1.0": (dc_ae_f64c128, None, "mit-han-lab"),
     "dc-ae-f128c512-in-1.0": (dc_ae_f128c512, None, "mit-han-lab"),
     #################################################################################################
@@ -51,6 +53,7 @@ REGISTERED_DCAE_MODEL: dict[str, tuple[Callable, Optional[str], Optional[str]]] 
     "dc-ae-lite-f32c32-sana-1.1": (dc_ae_f32c32, None, "mit-han-lab"),
     #################################################################################################
     "dc-ae-f32c32-in-1.0-256px": (dc_ae_f32c32, None, "mit-han-lab"),
+    "dc-ae-f32c32-in-1.0-256px_3d": (dc_ae_f32c32, None, "mit-han-lab"),
     #################################################################################################
     "dc-ae-f32c128-1.5": (dc_ae_f32_1_5, None, "dc-ai"),
     "dc-ae-f64c128-1.5": (dc_ae_f64_1_5, None, "dc-ai"),

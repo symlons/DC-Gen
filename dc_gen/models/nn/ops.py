@@ -23,7 +23,7 @@ from torch.amp import autocast
 
 from ..utils import get_same_padding, list_sum, resize, val2list, val2tuple
 from .act import build_act
-from .norm import build_norm
+from .norm import TritonRMSNorm2d, build_norm
 
 __all__ = [
     "ConvLayer",
@@ -38,7 +38,7 @@ __all__ = [
     "LinearLayer",
     "IdentityLayer",
     "SEModule",
-    # "CoordAttnModule",
+    "CoordAttnModule",
     "DSConv",
     "MBConv",
     "FusedMBConv",
@@ -46,8 +46,8 @@ __all__ = [
     "ResBlock",
     "GLUResBlock",
     "ChannelAttentionResBlock",
-    # "LiteMLA",
-    # "ReLULinearAttention",
+    "LiteMLA",
+    "ReLULinearAttention",
     "SoftmaxAttention",
     "EfficientViTBlock",
     "ResidualBlock",
@@ -61,62 +61,76 @@ __all__ = [
 #################################################################################
 
 
+def _spatial_ndims(dims: str) -> int:
+    if dims == "2d":
+        return 2
+    if dims == "3d":
+        return 3
+    raise ValueError(f"Unsupported dims='{dims}', expected '2d' or '3d'")
+
+
+def _normalize_spatial_arg(value: int | tuple[int, ...] | list[int], dims: str) -> tuple[int, ...]:
+    return val2tuple(value, _spatial_ndims(dims))
+
+
+def _factor_product(factor: int | tuple[int, ...] | list[int], dims: str) -> int:
+    factor_tuple = _normalize_spatial_arg(factor, dims)
+    product = 1
+    for axis_factor in factor_tuple:
+        product *= axis_factor
+    return product
+
+
 class ConvLayer(nn.Module):
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size: int = 3,
-        stride: int = 1,
-        dilation: int = 1,
+        kernel_size: int | tuple[int, ...] = 3,
+        stride: int | tuple[int, ...] = 1,
+        dilation: int | tuple[int, ...] = 1,
         groups: int = 1,
         use_bias: bool = False,
         dropout: float = 0,
         norm: Optional[str] = "bn2d",
         act_func: Optional[str] = "relu",
-        dims: int = 2,
-        isotropic: bool = True
+        dims: str = "2d",
     ):
         super(ConvLayer, self).__init__()
 
+        self.dims = dims
+        kernel_size = _normalize_spatial_arg(kernel_size, self.dims)
+        stride = _normalize_spatial_arg(stride, self.dims)
+        dilation = _normalize_spatial_arg(dilation, self.dims)
         padding = get_same_padding(kernel_size)
-        padding *= dilation
+        padding = tuple(p * d for p, d in zip(padding, dilation))
 
-        self.dropout = nn.Dropout2d(dropout, inplace=False) if dropout > 0 else None
-        if dims == 2:
+        if self.dims == "2d":
+            self.dropout = nn.Dropout2d(dropout, inplace=False) if dropout > 0 else None
             self.conv = nn.Conv2d(
                 in_channels,
                 out_channels,
-                kernel_size=(kernel_size, kernel_size),
-                stride=(stride, stride),
+                kernel_size=kernel_size,
+                stride=stride,
                 padding=padding,
-                dilation=(dilation, dilation),
+                dilation=dilation,
                 groups=groups,
                 bias=use_bias,
             )
-        elif dims == 3:
-            if isotropic:
-                self.conv = nn.Conv3d(
-                    in_channels,
-                    out_channels,
-                    kernel_size=(kernel_size, kernel_size, kernel_size),
-                    stride=(stride, stride, stride),
-                    padding=(padding, padding, padding),
-                    dilation=(dilation, dilation, dilation),
-                    groups=groups,
-                    bias=use_bias,
-                )
-            else:
-                self.conv = nn.Conv3d(
-                    in_channels,
-                    out_channels,
-                    kernel_size=(1, kernel_size, kernel_size),
-                    stride=(1, stride, stride),
-                    padding=(0, padding, padding),
-                    dilation=(1, dilation, dilation),
-                    groups=groups,
-                    bias=use_bias,
-                )
+        elif self.dims == "3d":
+            self.dropout = nn.Dropout3d(dropout, inplace=False) if dropout > 0 else None
+            self.conv = nn.Conv3d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                dilation=dilation,
+                groups=groups,
+                bias=use_bias,
+            )
+        else:
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
 
         self.norm = build_norm(norm, num_features=out_channels)
         self.act = build_act(act_func)
@@ -130,6 +144,8 @@ class ConvLayer(nn.Module):
         if self.act:
             x = self.act(x)
         return x
+
+
 
 class AdaptiveOutputConvLayer(nn.Module):
     def __init__(
@@ -232,15 +248,19 @@ class UpSampleLayer(nn.Module):
 
 
 class ConvPixelUnshuffleDownSampleLayer(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, factor: int, dims: int = 2, downsample_depth: bool = True, isotropic: bool = True):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        factor: int | tuple[int, ...] | list[int],
+        dims: str = "2d",
+    ):
         super().__init__()
-        self.factor = factor
         self.dims = dims
-        self.downsample_depth = downsample_depth
-        if dims == 3 and not downsample_depth:
-            out_ratio = factor ** 2
-        else:
-            out_ratio = factor ** dims
+        self.factor = _normalize_spatial_arg(factor, self.dims)
+
+        out_ratio = _factor_product(self.factor, self.dims)
         assert out_channels % out_ratio == 0
         self.conv = ConvLayer(
             in_channels=in_channels,
@@ -250,26 +270,40 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
             norm=None,
             act_func=None,
             dims=dims,
-            isotropic=isotropic
         )
+
+    @staticmethod
+    def _pixel_unshuffle_2d(x: torch.Tensor, factor: tuple[int, int]) -> torch.Tensor:
+        b, c, h, w = x.shape
+        fh, fw = factor
+        if h % fh != 0 or w % fw != 0:
+            raise ValueError(f"Input spatial dims ({h}, {w}) must be divisible by factor={factor}")
+
+        x = x.view(b, c, h // fh, fh, w // fw, fw)
+        x = x.permute(0, 1, 3, 5, 2, 4).contiguous()
+        x = x.view(b, c * (fh * fw), h // fh, w // fw)
+        return x
+
+    @staticmethod
+    def _pixel_unshuffle_3d(x: torch.Tensor, factor: tuple[int, int, int]) -> torch.Tensor:
+        b, c, d, h, w = x.shape
+        fd, fh, fw = factor
+        if d % fd != 0 or h % fh != 0 or w % fw != 0:
+            raise ValueError(f"Input spatial dims ({d}, {h}, {w}) must be divisible by factor={factor}")
+
+        x = x.view(b, c, d // fd, fd, h // fh, fh, w // fw, fw)
+        x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+        x = x.view(b, c * (fd * fh * fw), d // fd, h // fh, w // fw)
+        return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
-        f = self.factor
-        if self.dims == 3:
-            B, C, D, H, W = x.shape
-            if self.downsample_depth:
-                assert D % f == 0 and H % f == 0 and W % f == 0
-                x = x.view(B, C, D//f, f, H//f, f, W//f, f)
-                x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
-                x = x.view(B, C * f**3, D//f, H//f, W//f)
-            else:
-                assert H % f == 0 and W % f == 0
-                x = x.view(B, C, D, H//f, f, W//f, f)
-                x = x.permute(0, 1, 2, 4, 6, 3, 5).contiguous()
-                x = x.view(B, C * f**2, D, H//f, W//f)
+        if self.dims == "2d":
+            x = self._pixel_unshuffle_2d(x, self.factor)
+        elif self.dims == "3d":
+            x = self._pixel_unshuffle_3d(x, self.factor)
         else:
-            x = F.pixel_unshuffle(x, f)
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
         return x
 
 class PixelUnshuffleChannelAveragingDownSampleLayer(nn.Module):
@@ -277,47 +311,55 @@ class PixelUnshuffleChannelAveragingDownSampleLayer(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        factor: int,
-        dims: int,
-        downsample_depth: bool = True,
+        factor: int | tuple[int, ...] | list[int],
+        dims: str = "2d",
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.factor = factor
         self.dims = dims
-        self.downsample_depth = downsample_depth
-        if dims == 2:
-            assert in_channels * factor**2 % out_channels == 0
-            self.group_size = in_channels * factor**2 // out_channels
-        elif dims == 3:
-            spatial_factor = factor**3 if downsample_depth else factor**2
-            assert in_channels * spatial_factor % out_channels == 0
-            self.group_size = in_channels * spatial_factor // out_channels
-        else:
-            raise ValueError("dims must be 2 or 3")
+        self.factor = _normalize_spatial_arg(factor, self.dims)
+
+        out_ratio = _factor_product(self.factor, self.dims)
+        assert in_channels * out_ratio % out_channels == 0
+        self.group_size = in_channels * out_ratio // out_channels
+
+    @staticmethod
+    def _pixel_unshuffle_2d(x: torch.Tensor, factor: tuple[int, int]) -> torch.Tensor:
+        b, c, h, w = x.shape
+        fh, fw = factor
+        if h % fh != 0 or w % fw != 0:
+            raise ValueError(f"Input spatial dims ({h}, {w}) must be divisible by factor={factor}")
+
+        x = x.view(b, c, h // fh, fh, w // fw, fw)
+        x = x.permute(0, 1, 3, 5, 2, 4).contiguous()
+        x = x.view(b, c * (fh * fw), h // fh, w // fw)
+        return x
+
+    @staticmethod
+    def _pixel_unshuffle_3d(x: torch.Tensor, factor: tuple[int, int, int]) -> torch.Tensor:
+        b, c, d, h, w = x.shape
+        fd, fh, fw = factor
+        if d % fd != 0 or h % fh != 0 or w % fw != 0:
+            raise ValueError(f"Input spatial dims ({d}, {h}, {w}) must be divisible by factor={factor}")
+
+        x = x.view(b, c, d // fd, fd, h // fh, fh, w // fw, fw)
+        x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+        x = x.view(b, c * (fd * fh * fw), d // fd, h // fh, w // fw)
+        return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.dims == 2:
-            x = F.pixel_unshuffle(x, self.factor)
-            B, C, H, W = x.shape
-            x = x.view(B, self.out_channels, self.group_size, H, W)
-            x = x.mean(dim=2)
+        if self.dims == "2d":
+            x = self._pixel_unshuffle_2d(x, self.factor)
+            b, _, h, w = x.shape
+            x = x.view(b, self.out_channels, self.group_size, h, w)
+        elif self.dims == "3d":
+            x = self._pixel_unshuffle_3d(x, self.factor)
+            b, _, d, h, w = x.shape
+            x = x.view(b, self.out_channels, self.group_size, d, h, w)
         else:
-            B, C, D, H, W = x.shape
-            f = self.factor
-            if self.downsample_depth:
-                assert D % f == 0 and H % f == 0 and W % f == 0
-                x = x.view(B, C, D//f, f, H//f, f, W//f, f)
-                x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
-                x = x.view(B, self.out_channels, self.group_size, D//f, H//f, W//f)
-                x = x.mean(dim=2)
-            else:
-                assert H % f == 0 and W % f == 0
-                x = x.view(B, C, D, H//f, f, W//f, f)
-                x = x.permute(0, 1, 2, 4, 6, 3, 5).contiguous()
-                x = x.view(B, self.out_channels, self.group_size, D, H//f, W//f)
-                x = x.mean(dim=2)
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
+        x = x.mean(dim=2)
         return x
 
 
@@ -327,18 +369,14 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
         in_channels: int,
         out_channels: int,
         kernel_size: int,
-        factor: int,
-        dims: int = 2,
-        isotropic: bool = True
+        factor: int | tuple[int, ...] | list[int],
+        dims: str = "2d",
     ):
         super().__init__()
-        self.factor = factor
         self.dims = dims
-        self.isotropic = isotropic
-        if dims == 3:
-            out_ratio = factor ** 3 if isotropic else factor ** 2
-        else:
-            out_ratio = factor ** 2
+        self.factor = _normalize_spatial_arg(factor, self.dims)
+
+        out_ratio = _factor_product(self.factor, self.dims)
         self.conv = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels * out_ratio,
@@ -347,26 +385,44 @@ class ConvPixelShuffleUpSampleLayer(nn.Module):
             norm=None,
             act_func=None,
             dims=dims,
-            isotropic=isotropic,
         )
+
+    @staticmethod
+    def _pixel_shuffle_2d(x: torch.Tensor, factor: tuple[int, int]) -> torch.Tensor:
+        b, c, h, w = x.shape
+        fh, fw = factor
+        out_ratio = fh * fw
+        if c % out_ratio != 0:
+            raise ValueError(f"Channel dimension {c} must be divisible by factor_product={out_ratio}")
+
+        out_c = c // out_ratio
+        x = x.view(b, out_c, fh, fw, h, w)
+        x = x.permute(0, 1, 4, 2, 5, 3).contiguous()
+        x = x.view(b, out_c, h * fh, w * fw)
+        return x
+
+    @staticmethod
+    def _pixel_shuffle_3d(x: torch.Tensor, factor: tuple[int, int, int]) -> torch.Tensor:
+        b, c, d, h, w = x.shape
+        fd, fh, fw = factor
+        out_ratio = fd * fh * fw
+        if c % out_ratio != 0:
+            raise ValueError(f"Channel dimension {c} must be divisible by factor_product={out_ratio}")
+
+        out_c = c // out_ratio
+        x = x.view(b, out_c, fd, fh, fw, d, h, w)
+        x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+        x = x.view(b, out_c, d * fd, h * fh, w * fw)
+        return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
-        f = self.factor
-        if self.dims == 3:
-            B, C, D, H, W = x.shape
-            if self.isotropic:
-                C = C // (f**3)
-                x = x.view(B, C, f, f, f, D, H, W)
-                x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
-                x = x.view(B, C, D*f, H*f, W*f)
-            else:
-                C = C // (f**2)
-                x = x.view(B, C, f, f, D, H, W)
-                x = x.permute(0, 1, 4, 5, 2, 6, 3).contiguous()
-                x = x.view(B, C, D, H*f, W*f)
-        elif self.dims == 2:
-            x = F.pixel_shuffle(x, f)
+        if self.dims == "2d":
+            x = self._pixel_shuffle_2d(x, self.factor)
+        elif self.dims == "3d":
+            x = self._pixel_shuffle_3d(x, self.factor)
+        else:
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
         return x
 
 
@@ -402,40 +458,55 @@ class ChannelDuplicatingPixelShuffleUpSampleLayer(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        factor: int,
-        dims: int = 2,
-        isotropic: bool = True,
+        factor: int | tuple[int, ...] | list[int],
+        dims: str = "2d",
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.factor = factor
         self.dims = dims
-        self.isotropic = isotropic
-        if dims == 3:
-            spatial_factor = factor**3 if isotropic else factor**2
-        else:
-            spatial_factor = factor**2
-        assert out_channels * spatial_factor % in_channels == 0
-        self.repeats = out_channels * spatial_factor // in_channels
+        self.factor = _normalize_spatial_arg(factor, self.dims)
+
+        out_ratio = _factor_product(self.factor, self.dims)
+        assert out_channels * out_ratio % in_channels == 0
+        self.repeats = out_channels * out_ratio // in_channels
+
+    @staticmethod
+    def _pixel_shuffle_2d(x: torch.Tensor, factor: tuple[int, int]) -> torch.Tensor:
+        b, c, h, w = x.shape
+        fh, fw = factor
+        out_ratio = fh * fw
+        if c % out_ratio != 0:
+            raise ValueError(f"Channel dimension {c} must be divisible by factor_product={out_ratio}")
+
+        out_c = c // out_ratio
+        x = x.view(b, out_c, fh, fw, h, w)
+        x = x.permute(0, 1, 4, 2, 5, 3).contiguous()
+        x = x.view(b, out_c, h * fh, w * fw)
+        return x
+
+    @staticmethod
+    def _pixel_shuffle_3d(x: torch.Tensor, factor: tuple[int, int, int]) -> torch.Tensor:
+        b, c, d, h, w = x.shape
+        fd, fh, fw = factor
+        out_ratio = fd * fh * fw
+        if c % out_ratio != 0:
+            raise ValueError(f"Channel dimension {c} must be divisible by factor_product={out_ratio}")
+
+        out_c = c // out_ratio
+        x = x.view(b, out_c, fd, fh, fw, d, h, w)
+        x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+        x = x.view(b, out_c, d * fd, h * fh, w * fw)
+        return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.repeat_interleave(self.repeats, dim=1)
-        f = self.factor
-        if self.dims == 3:
-            B, C, D, H, W = x.shape
-            if self.isotropic:
-                C = C // (f**3)
-                x = x.view(B, C, f, f, f, D, H, W)
-                x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
-                x = x.view(B, C, D*f, H*f, W*f)
-            else:
-                C = C // (f**2)
-                x = x.view(B, C, f, f, D, H, W)
-                x = x.permute(0, 1, 4, 5, 2, 6, 3).contiguous()
-                x = x.view(B, C, D, H*f, W*f)
-        elif self.dims == 2:
-            x = F.pixel_shuffle(x, f)
+        if self.dims == "2d":
+            x = self._pixel_shuffle_2d(x, self.factor)
+        elif self.dims == "3d":
+            x = self._pixel_shuffle_3d(x, self.factor)
+        else:
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
         return x
 
 
@@ -501,43 +572,43 @@ class SEModule(nn.Module):
         return module_input * x
 
 
-# class CoordAttnModule(nn.Module):
-#     "https://github.com/houqb/CoordAttention/blob/main/mbv2_ca.py"
-#
-#     def __init__(self, inp, oup, groups=4):
-#         super().__init__()
-#         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
-#         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
-#
-#         mip = max(8, inp // groups)
-#
-#         self.conv1 = nn.Conv2d(inp, mip, kernel_size=1, stride=1, padding=0)
-#         self.norm = TritonRMSNorm2d(mip)
-#         self.conv2 = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
-#         self.conv3 = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
-#         self.act = nn.SiLU(inplace=True)
-#
-#     def forward(self, x):
-#         identity = x
-#         n, c, h, w = x.size()
-#         x_h = self.pool_h(x)
-#         x_w = self.pool_w(x).permute(0, 1, 3, 2)
-#
-#         y = torch.cat([x_h, x_w], dim=2)
-#         y = self.conv1(y)
-#         y = self.norm(y)
-#         y = self.act(y)
-#         x_h, x_w = torch.split(y, [h, w], dim=2)
-#         x_w = x_w.permute(0, 1, 3, 2)
-#
-#         x_h = self.conv2(x_h).sigmoid()
-#         x_w = self.conv3(x_w).sigmoid()
-#         x_h = x_h.expand(-1, -1, h, w)
-#         x_w = x_w.expand(-1, -1, h, w)
-#
-#         y = identity * x_w * x_h
-#
-#         return y
+class CoordAttnModule(nn.Module):
+    "https://github.com/houqb/CoordAttention/blob/main/mbv2_ca.py"
+
+    def __init__(self, inp, oup, groups=4):
+        super().__init__()
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+
+        mip = max(8, inp // groups)
+
+        self.conv1 = nn.Conv2d(inp, mip, kernel_size=1, stride=1, padding=0)
+        self.norm = TritonRMSNorm2d(mip)
+        self.conv2 = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
+        self.conv3 = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
+        self.act = nn.SiLU(inplace=True)
+
+    def forward(self, x):
+        identity = x
+        n, c, h, w = x.size()
+        x_h = self.pool_h(x)
+        x_w = self.pool_w(x).permute(0, 1, 3, 2)
+
+        y = torch.cat([x_h, x_w], dim=2)
+        y = self.conv1(y)
+        y = self.norm(y)
+        y = self.act(y)
+        x_h, x_w = torch.split(y, [h, w], dim=2)
+        x_w = x_w.permute(0, 1, 3, 2)
+
+        x_h = self.conv2(x_h).sigmoid()
+        x_w = self.conv3(x_w).sigmoid()
+        x_h = x_h.expand(-1, -1, h, w)
+        x_w = x_w.expand(-1, -1, h, w)
+
+        y = identity * x_w * x_h
+
+        return y
 
 
 #################################################################################
@@ -760,8 +831,7 @@ class ResBlock(nn.Module):
         use_bias: bool = False,
         norm: tuple[Optional[str]] = ("bn2d", "bn2d"),
         act_func: tuple[Optional[str]] = ("relu6", None),
-        dims: int = 2,
-        isotropic: bool = True
+        dims: str = "2d"
     ):
         super().__init__()
         use_bias = val2tuple(use_bias, 2)
@@ -779,7 +849,6 @@ class ResBlock(nn.Module):
             norm=norm[0],
             act_func=act_func[0],
             dims=dims,
-            isotropic=isotropic
         )
         self.conv2 = ConvLayer(
             mid_channels,
@@ -790,7 +859,6 @@ class ResBlock(nn.Module):
             norm=norm[1],
             act_func=act_func[1],
             dims=dims,
-            isotropic=isotropic
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -896,8 +964,8 @@ class ChannelAttentionResBlock(nn.Module):
         )
         if channel_attention_operation == "SEModule":
             self.channel_attention = SEModule(out_channels, reduction=4)
-        # elif channel_attention_operation == "CoordAttnModule":
-        #     self.channel_attention = CoordAttnModule(out_channels, out_channels, groups=4)
+        elif channel_attention_operation == "CoordAttnModule":
+            self.channel_attention = CoordAttnModule(out_channels, out_channels, groups=4)
         else:
             raise ValueError(f"channel_attention_operation {channel_attention_operation} is not supported")
         self.channel_attention_position = channel_attention_position
@@ -912,254 +980,254 @@ class ChannelAttentionResBlock(nn.Module):
         return x
 
 
-# class LiteMLA(nn.Module):
-#     r"""Lightweight multi-scale linear attention"""
-#
-#     def __init__(
-#         self,
-#         in_channels: int,
-#         out_channels: int,
-#         heads: Optional[int] = None,
-#         heads_ratio: float = 1.0,
-#         dim=8,
-#         use_bias=False,
-#         norm=(None, "bn2d"),
-#         act_func=(None, None),
-#         kernel_func="relu",
-#         scales: tuple[int, ...] = (5,),
-#         eps=1.0e-15,
-#         norm_qk: bool = False,
-#     ):
-#         super(LiteMLA, self).__init__()
-#         self.eps = eps
-#         heads = int(in_channels // dim * heads_ratio) if heads is None else heads
-#
-#         self.total_dim = total_dim = heads * dim
-#
-#         use_bias = val2tuple(use_bias, 2)
-#         norm = val2tuple(norm, 2)
-#         act_func = val2tuple(act_func, 2)
-#
-#         self.dim = dim
-#         self.qkv = ConvLayer(
-#             in_channels,
-#             3 * total_dim,
-#             1,
-#             use_bias=use_bias[0],
-#             norm=norm[0],
-#             act_func=act_func[0],
-#         )
-#         self.norm_qk = norm_qk
-#         if norm_qk:
-#             self.norm_q = TritonRMSNorm2d(total_dim)
-#             self.norm_k = TritonRMSNorm2d(total_dim)
-#         self.aggreg = nn.ModuleList(
-#             [
-#                 nn.Sequential(
-#                     nn.Conv2d(
-#                         3 * total_dim,
-#                         3 * total_dim,
-#                         scale,
-#                         padding=get_same_padding(scale),
-#                         groups=3 * total_dim,
-#                         bias=use_bias[0],
-#                     ),
-#                     nn.Conv2d(3 * total_dim, 3 * total_dim, 1, groups=3 * heads, bias=use_bias[0]),
-#                 )
-#                 for scale in scales
-#             ]
-#         )
-#         self.kernel_func = build_act(kernel_func, inplace=False)
-#
-#         self.proj = ConvLayer(
-#             total_dim * (1 + len(scales)),
-#             out_channels,
-#             1,
-#             use_bias=use_bias[1],
-#             norm=norm[1],
-#             act_func=act_func[1],
-#         )
-#
-#     @autocast(device_type="cuda", enabled=False)
-#     def relu_linear_att(self, qkv: torch.Tensor) -> torch.Tensor:
-#         B, _, H, W = list(qkv.size())
-#
-#         if qkv.dtype == torch.float16:
-#             qkv = qkv.float()
-#
-#         if self.norm_qk:
-#             q, k, v = (
-#                 qkv[:, : self.total_dim],
-#                 qkv[:, self.total_dim : 2 * self.total_dim],
-#                 qkv[:, 2 * self.total_dim :],
-#             )
-#             q, k = self.norm_q(q), self.norm_k(k)
-#             q, k, v = (
-#                 q.reshape(B, -1, self.dim, H * W),
-#                 k.reshape(B, -1, self.dim, H * W),
-#                 v.reshape(B, -1, self.dim, H * W),
-#             )
-#         else:
-#             qkv = torch.reshape(
-#                 qkv,
-#                 (
-#                     B,
-#                     -1,
-#                     3 * self.dim,
-#                     H * W,
-#                 ),
-#             )
-#             q, k, v = (
-#                 qkv[:, :, 0 : self.dim],
-#                 qkv[:, :, self.dim : 2 * self.dim],
-#                 qkv[:, :, 2 * self.dim :],
-#             )
-#
-#         # lightweight linear attention
-#         q = self.kernel_func(q)
-#         k = self.kernel_func(k)
-#
-#         # linear matmul
-#         trans_k = k.transpose(-1, -2)
-#
-#         v = F.pad(v, (0, 0, 0, 1), mode="constant", value=1)
-#         vk = torch.matmul(v, trans_k)
-#         out = torch.matmul(vk, q)
-#         if out.dtype == torch.bfloat16:
-#             out = out.float()
-#         out = out[:, :, :-1] / (out[:, :, -1:] + self.eps)
-#
-#         out = torch.reshape(out, (B, -1, H, W))
-#         return out
-#
-#     @autocast(device_type="cuda", enabled=False)
-#     def relu_quadratic_att(self, qkv: torch.Tensor) -> torch.Tensor:
-#         B, _, H, W = list(qkv.size())
-#
-#         if self.norm_qk:
-#             q, k, v = (
-#                 qkv[:, : self.total_dim],
-#                 qkv[:, self.total_dim : 2 * self.total_dim],
-#                 qkv[:, 2 * self.total_dim :],
-#             )
-#             q, k = self.norm_q(q), self.norm_k(k)
-#             q, k, v = (
-#                 q.reshape(B, -1, self.dim, H * W),
-#                 k.reshape(B, -1, self.dim, H * W),
-#                 v.reshape(B, -1, self.dim, H * W),
-#             )
-#         else:
-#             qkv = torch.reshape(
-#                 qkv,
-#                 (
-#                     B,
-#                     -1,
-#                     3 * self.dim,
-#                     H * W,
-#                 ),
-#             )
-#             q, k, v = (
-#                 qkv[:, :, 0 : self.dim],
-#                 qkv[:, :, self.dim : 2 * self.dim],
-#                 qkv[:, :, 2 * self.dim :],
-#             )
-#
-#         q = self.kernel_func(q)
-#         k = self.kernel_func(k)
-#
-#         att_map = torch.matmul(k.transpose(-1, -2), q)  # b h n n
-#         original_dtype = att_map.dtype
-#         if original_dtype in [torch.float16, torch.bfloat16]:
-#             att_map = att_map.float()
-#         att_map = att_map / (torch.sum(att_map, dim=2, keepdim=True) + self.eps)  # b h n n
-#         att_map = att_map.to(original_dtype)
-#         out = torch.matmul(v, att_map)  # b h d n
-#
-#         out = torch.reshape(out, (B, -1, H, W))
-#         return out
-#
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         # generate multi-scale q, k, v
-#         qkv = self.qkv(x)
-#         multi_scale_qkv = [qkv]
-#         for op in self.aggreg:
-#             multi_scale_qkv.append(op(qkv))
-#         qkv = torch.cat(multi_scale_qkv, dim=1)
-#
-#         H, W = list(qkv.size())[-2:]
-#         if H * W > self.dim:
-#             out = self.relu_linear_att(qkv).to(qkv.dtype)
-#         else:
-#             out = self.relu_quadratic_att(qkv)
-#         out = self.proj(out)
-#
-#         return out
+class LiteMLA(nn.Module):
+    r"""Lightweight multi-scale linear attention"""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        heads: Optional[int] = None,
+        heads_ratio: float = 1.0,
+        dim=8,
+        use_bias=False,
+        norm=(None, "bn2d"),
+        act_func=(None, None),
+        kernel_func="relu",
+        scales: tuple[int, ...] = (5,),
+        eps=1.0e-15,
+        norm_qk: bool = False,
+    ):
+        super(LiteMLA, self).__init__()
+        self.eps = eps
+        heads = int(in_channels // dim * heads_ratio) if heads is None else heads
+
+        self.total_dim = total_dim = heads * dim
+
+        use_bias = val2tuple(use_bias, 2)
+        norm = val2tuple(norm, 2)
+        act_func = val2tuple(act_func, 2)
+
+        self.dim = dim
+        self.qkv = ConvLayer(
+            in_channels,
+            3 * total_dim,
+            1,
+            use_bias=use_bias[0],
+            norm=norm[0],
+            act_func=act_func[0],
+        )
+        self.norm_qk = norm_qk
+        if norm_qk:
+            self.norm_q = TritonRMSNorm2d(total_dim)
+            self.norm_k = TritonRMSNorm2d(total_dim)
+        self.aggreg = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(
+                        3 * total_dim,
+                        3 * total_dim,
+                        scale,
+                        padding=get_same_padding(scale),
+                        groups=3 * total_dim,
+                        bias=use_bias[0],
+                    ),
+                    nn.Conv2d(3 * total_dim, 3 * total_dim, 1, groups=3 * heads, bias=use_bias[0]),
+                )
+                for scale in scales
+            ]
+        )
+        self.kernel_func = build_act(kernel_func, inplace=False)
+
+        self.proj = ConvLayer(
+            total_dim * (1 + len(scales)),
+            out_channels,
+            1,
+            use_bias=use_bias[1],
+            norm=norm[1],
+            act_func=act_func[1],
+        )
+
+    @autocast(device_type="cuda", enabled=False)
+    def relu_linear_att(self, qkv: torch.Tensor) -> torch.Tensor:
+        B, _, H, W = list(qkv.size())
+
+        if qkv.dtype == torch.float16:
+            qkv = qkv.float()
+
+        if self.norm_qk:
+            q, k, v = (
+                qkv[:, : self.total_dim],
+                qkv[:, self.total_dim : 2 * self.total_dim],
+                qkv[:, 2 * self.total_dim :],
+            )
+            q, k = self.norm_q(q), self.norm_k(k)
+            q, k, v = (
+                q.reshape(B, -1, self.dim, H * W),
+                k.reshape(B, -1, self.dim, H * W),
+                v.reshape(B, -1, self.dim, H * W),
+            )
+        else:
+            qkv = torch.reshape(
+                qkv,
+                (
+                    B,
+                    -1,
+                    3 * self.dim,
+                    H * W,
+                ),
+            )
+            q, k, v = (
+                qkv[:, :, 0 : self.dim],
+                qkv[:, :, self.dim : 2 * self.dim],
+                qkv[:, :, 2 * self.dim :],
+            )
+
+        # lightweight linear attention
+        q = self.kernel_func(q)
+        k = self.kernel_func(k)
+
+        # linear matmul
+        trans_k = k.transpose(-1, -2)
+
+        v = F.pad(v, (0, 0, 0, 1), mode="constant", value=1)
+        vk = torch.matmul(v, trans_k)
+        out = torch.matmul(vk, q)
+        if out.dtype == torch.bfloat16:
+            out = out.float()
+        out = out[:, :, :-1] / (out[:, :, -1:] + self.eps)
+
+        out = torch.reshape(out, (B, -1, H, W))
+        return out
+
+    @autocast(device_type="cuda", enabled=False)
+    def relu_quadratic_att(self, qkv: torch.Tensor) -> torch.Tensor:
+        B, _, H, W = list(qkv.size())
+
+        if self.norm_qk:
+            q, k, v = (
+                qkv[:, : self.total_dim],
+                qkv[:, self.total_dim : 2 * self.total_dim],
+                qkv[:, 2 * self.total_dim :],
+            )
+            q, k = self.norm_q(q), self.norm_k(k)
+            q, k, v = (
+                q.reshape(B, -1, self.dim, H * W),
+                k.reshape(B, -1, self.dim, H * W),
+                v.reshape(B, -1, self.dim, H * W),
+            )
+        else:
+            qkv = torch.reshape(
+                qkv,
+                (
+                    B,
+                    -1,
+                    3 * self.dim,
+                    H * W,
+                ),
+            )
+            q, k, v = (
+                qkv[:, :, 0 : self.dim],
+                qkv[:, :, self.dim : 2 * self.dim],
+                qkv[:, :, 2 * self.dim :],
+            )
+
+        q = self.kernel_func(q)
+        k = self.kernel_func(k)
+
+        att_map = torch.matmul(k.transpose(-1, -2), q)  # b h n n
+        original_dtype = att_map.dtype
+        if original_dtype in [torch.float16, torch.bfloat16]:
+            att_map = att_map.float()
+        att_map = att_map / (torch.sum(att_map, dim=2, keepdim=True) + self.eps)  # b h n n
+        att_map = att_map.to(original_dtype)
+        out = torch.matmul(v, att_map)  # b h d n
+
+        out = torch.reshape(out, (B, -1, H, W))
+        return out
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # generate multi-scale q, k, v
+        qkv = self.qkv(x)
+        multi_scale_qkv = [qkv]
+        for op in self.aggreg:
+            multi_scale_qkv.append(op(qkv))
+        qkv = torch.cat(multi_scale_qkv, dim=1)
+
+        H, W = list(qkv.size())[-2:]
+        if H * W > self.dim:
+            out = self.relu_linear_att(qkv).to(qkv.dtype)
+        else:
+            out = self.relu_quadratic_att(qkv)
+        out = self.proj(out)
+
+        return out
 
 
-# class ReLULinearAttention(LiteMLA):
-#     "relu linear attention used in efficientvit"
-#
-#     def __init__(
-#         self,
-#         in_channels: int,
-#         out_channels: int,
-#         heads: Optional[int] = None,
-#         heads_ratio: float = 1.0,
-#         dim=32,
-#         use_bias=False,
-#         norm=(None, "ln2d"),
-#         act_func=(None, None),
-#         kernel_func="relu",
-#         eps=1.0e-8,
-#         norm_qk: bool = False,
-#     ):
-#         nn.Module.__init__(self)
-#         self.eps = eps
-#         heads = int(in_channels // dim * heads_ratio) if heads is None else heads
-#
-#         self.total_dim = total_dim = heads * dim
-#
-#         use_bias = val2tuple(use_bias, 2)
-#         norm = val2tuple(norm, 2)
-#         act_func = val2tuple(act_func, 2)
-#
-#         self.dim = dim
-#         self.qkv = ConvLayer(
-#             in_channels,
-#             3 * total_dim,
-#             1,
-#             use_bias=use_bias[0],
-#             norm=norm[0],
-#             act_func=act_func[0],
-#         )
-#         self.norm_qk = norm_qk
-#         if norm_qk:
-#             self.norm_q = TritonRMSNorm2d(total_dim)
-#             self.norm_k = TritonRMSNorm2d(total_dim)
-#
-#         self.kernel_func = build_act(kernel_func, inplace=False)
-#
-#         self.proj = ConvLayer(
-#             total_dim,
-#             out_channels,
-#             1,
-#             use_bias=use_bias[1],
-#             norm=norm[1],
-#             act_func=act_func[1],
-#         )
-#
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         # generate multi-scale q, k, v
-#         qkv = self.qkv(x)
-#
-#         H, W = list(qkv.size())[-2:]
-#         if H * W > self.dim:
-#             out = self.relu_linear_att(qkv).to(qkv.dtype)
-#         else:
-#             out = self.relu_quadratic_att(qkv)
-#         out = self.proj(out)
-#
-#         return out
+class ReLULinearAttention(LiteMLA):
+    "relu linear attention used in efficientvit"
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        heads: Optional[int] = None,
+        heads_ratio: float = 1.0,
+        dim=32,
+        use_bias=False,
+        norm=(None, "ln2d"),
+        act_func=(None, None),
+        kernel_func="relu",
+        eps=1.0e-8,
+        norm_qk: bool = False,
+    ):
+        nn.Module.__init__(self)
+        self.eps = eps
+        heads = int(in_channels // dim * heads_ratio) if heads is None else heads
+
+        self.total_dim = total_dim = heads * dim
+
+        use_bias = val2tuple(use_bias, 2)
+        norm = val2tuple(norm, 2)
+        act_func = val2tuple(act_func, 2)
+
+        self.dim = dim
+        self.qkv = ConvLayer(
+            in_channels,
+            3 * total_dim,
+            1,
+            use_bias=use_bias[0],
+            norm=norm[0],
+            act_func=act_func[0],
+        )
+        self.norm_qk = norm_qk
+        if norm_qk:
+            self.norm_q = TritonRMSNorm2d(total_dim)
+            self.norm_k = TritonRMSNorm2d(total_dim)
+
+        self.kernel_func = build_act(kernel_func, inplace=False)
+
+        self.proj = ConvLayer(
+            total_dim,
+            out_channels,
+            1,
+            use_bias=use_bias[1],
+            norm=norm[1],
+            act_func=act_func[1],
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # generate multi-scale q, k, v
+        qkv = self.qkv(x)
+
+        H, W = list(qkv.size())[-2:]
+        if H * W > self.dim:
+            out = self.relu_linear_att(qkv).to(qkv.dtype)
+        else:
+            out = self.relu_quadratic_att(qkv)
+        out = self.proj(out)
+
+        return out
 
 
 class SoftmaxAttention(nn.Module):
@@ -1309,20 +1377,20 @@ class EfficientViTBlock(nn.Module):
         norm_qk: bool = False,
     ):
         super(EfficientViTBlock, self).__init__()
-        # if context_module == "LiteMLA":
-            # self.context_module = ResidualBlock(
-            #     LiteMLA(
-            #         in_channels=in_channels,
-            #         out_channels=in_channels,
-            #         heads_ratio=heads_ratio,
-            #         dim=dim,
-            #         norm=(None, norm),
-            #         scales=scales,
-            #         norm_qk=norm_qk,
-            #     ),
-            #     IdentityLayer(),
-            # )
-        if context_module == "SoftmaxAttention":
+        if context_module == "LiteMLA":
+            self.context_module = ResidualBlock(
+                LiteMLA(
+                    in_channels=in_channels,
+                    out_channels=in_channels,
+                    heads_ratio=heads_ratio,
+                    dim=dim,
+                    norm=(None, norm),
+                    scales=scales,
+                    norm_qk=norm_qk,
+                ),
+                IdentityLayer(),
+            )
+        elif context_module == "SoftmaxAttention":
             self.context_module = ResidualBlock(
                 SoftmaxAttention(
                     in_channels=in_channels,

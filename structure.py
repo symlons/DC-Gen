@@ -48,6 +48,7 @@ def main_worker(rank: int, world_size: int, cfg):
 
     dtype = getattr(torch, cfg.training.dtype)
     model = DCAE_HF(model_name=cfg.model.name).to(dtype=dtype, device=device)
+
     if getattr(cfg.model, "compile", False): model = torch.compile(model)
     if use_cuda and world_size > 1: model = wrap_ddp(model, device, rank, world_size)
     model.train()
@@ -69,6 +70,7 @@ def main_worker(rank: int, world_size: int, cfg):
     log_metrics = cfg.logging.wandb
     if log_metrics: wandb.init(project="ct_retcon", config=vars(cfg))
     print("Compiling: ", cfg.model.compile)
+    print(model)
 
     for epoch in range(num_epochs):
         if sampler: sampler.set_epoch(epoch)

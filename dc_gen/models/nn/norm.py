@@ -21,9 +21,10 @@ import torch.nn as nn
 from torch.nn.modules.batchnorm import _BatchNorm
 
 from ..utils import build_kwargs_from_config
-# from .triton_rms_norm import TritonRMSNorm2dFunc
+from .triton_rms_norm import TritonRMSNorm2dFunc
 
-__all__ = ["LayerNorm2d", "build_norm", "reset_bn", "set_norm_eps"]
+
+__all__ = ["LayerNorm2d", "TritonRMSNorm2d","build_norm", "reset_bn", "set_norm_eps"]
 
 
 class LayerNorm2d(nn.LayerNorm):
@@ -35,31 +36,40 @@ class LayerNorm2d(nn.LayerNorm):
         return out
 
 
-# class TritonRMSNorm2d(nn.LayerNorm):
-#     def zero_out(self):
-#         nn.init.constant_(self.weight, 0)
-#         nn.init.constant_(self.bias, 0)
-#
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         input_numel = x.numel()
-#         if input_numel >= 1 << 31:
-#             num_chunks = (input_numel - 1) // (1 << 31) + 1
-#             output = []
-#             for x_chunk in x.chunk(num_chunks, dim=2):
-#                 output.append(TritonRMSNorm2dFunc.apply(x_chunk.contiguous(), self.weight, self.bias, self.eps))
-#             output = torch.cat(output, dim=2)
-#             return output
-#         else:
-#             return TritonRMSNorm2dFunc.apply(x.contiguous(), self.weight, self.bias, self.eps)
+class TritonRMSNorm2d(nn.LayerNorm):
+    def zero_out(self):
+        nn.init.constant_(self.weight, 0)
+        nn.init.constant_(self.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        input_numel = x.numel()
+        if input_numel >= 1 << 31:
+            num_chunks = (input_numel - 1) // (1 << 31) + 1
+            output = []
+            for x_chunk in x.chunk(num_chunks, dim=2):
+                output.append(TritonRMSNorm2dFunc.apply(x_chunk.contiguous(), self.weight, self.bias, self.eps))
+            output = torch.cat(output, dim=2)
+            return output
+        else:
+            return TritonRMSNorm2dFunc.apply(x.contiguous(), self.weight, self.bias, self.eps)
 
 
 class RMSNorm2d(nn.LayerNorm):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.permute(0, 2, 3, 1)
-        x = x / torch.sqrt(torch.square(x).mean(dim=-1, keepdim=True) + self.eps)
-        if self.elementwise_affine:
-            x = x * self.weight + self.bias
-        x = x.permute(0, 3, 1, 2)
+        if x.dim() == 4:
+            x = x.permute(0, 2, 3, 1)
+            x = x / torch.sqrt(torch.square(x).mean(dim=-1, keepdim=True) + self.eps)
+            if self.elementwise_affine:
+                x = x * self.weight + self.bias
+            x = x.permute(0, 3, 1, 2)
+        elif x.dim() == 5:
+            x = x.permute(0, 2, 3, 4, 1)
+            x = x / torch.sqrt(torch.square(x).mean(dim=-1, keepdim=True) + self.eps)
+            if self.elementwise_affine:
+                x = x * self.weight + self.bias
+            x = x.permute(0, 4, 1, 2, 3)
+        else:
+            raise ValueError(f"Unsupported input shape {x.shape}")
         return x
 
 
@@ -70,7 +80,7 @@ REGISTERED_NORM_DICT: dict[str, type] = {
     "ln": nn.LayerNorm,
     "ln2d": LayerNorm2d,
     "rms2d": RMSNorm2d,
-    # "trms2d": TritonRMSNorm2d,
+    "trms2d": TritonRMSNorm2d,
 }
 
 

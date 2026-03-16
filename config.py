@@ -55,14 +55,14 @@ class DatasetConfig:
 # @dataclass
 # class PathsConfig:
 #     hdf_path: str = "/mnt/Volume-eV4BofCN/ct_rate_train_batch_0_v13.hdf"
-#     checkpoint_dir: str = "/checkpoints"
+#     checkpoint_dir: str = "/mnt/checkpoints"
 #     save_dir: str = "/mnt/Volume-eV4BofCN/artifacts_3d_33"
 
 @dataclass
 class PathsConfig:
     hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
-    checkpoint_dir: str = "/data/checkpoints"
-    save_dir: str = "/data/Volume-eV4BofCN/artifacts_3d_33_2"
+    checkpoint_dir: str = "/data/checkpoints_3"
+    save_dir: str = "/data/Volume-eV4BofCN/artifacts_3d_33_3"
 
 @dataclass
 class PipelineConfig:
@@ -91,12 +91,12 @@ class TrainingConfig:
 
 @dataclass
 class HParamsConfig:
-    learning_rate: float = 6e-6
+    learning_rate: float = 4e-5
     weight_decay: float = 1e-1
 
 @dataclass
 class ModelConfig:
-    name: str = "dc-ae-f32c32-in-1.0"
+    name: str = "dc-ae-f32c32-in-1.0_3d"
     compile: bool = True
 
 @dataclass
