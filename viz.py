@@ -9,7 +9,7 @@ from basics import ensure_batch, to_numpy, ensure_numpy, compute_map
 
 class Saver(ABC):
     @abstractmethod
-    def save(self, gt, recon, save_dir):
+    def save(self, gt, recon, save_dir, global_step):
         pass
 
 class Visualize(Saver):
@@ -70,36 +70,35 @@ class VisualizeBase(Visualize, viz_type="base"):
         save_figure(fig, save_path, im_for_colorbar=axes[0,2].images[0], label="Difference Intensity")
 
 class Visualize2D(VisualizeBase, viz_type="2d"):
-    def save(self, gt, recon, save_dir, title_suffix=""):
-        gt_batch, recon_batch, diff_batch = self._prepare_and_diff(gt, recon)
+    def save(self, gt, recon, save_dir, global_step, title_suffix=""):
+            gt_batch, recon_batch, diff_batch = self._prepare_and_diff(gt, recon)
 
-        for i in range(gt_batch.shape[0]):
-            slice_save_path = os.path.join(save_dir, f"sample_{i}_{title_suffix}.png")
-            titles = [[f"GT {title_suffix} (Sample {i})",
-                       f"Recon {title_suffix} (Sample {i})",
-                       f"Diff {title_suffix} (Sample {i})"]]
-            self._plot_and_save(gt_batch[i:i+1], recon_batch[i:i+1], diff_batch[i:i+1],
-                                slice_save_path, titles=titles)
-
+            for i in range(gt_batch.shape[0]):
+                slice_save_path = os.path.join(save_dir, f"sample_step{global_step}_{i}_{title_suffix}.png")
+                titles = [[f"GT {title_suffix} (Sample {i})",
+                           f"Recon {title_suffix} (Sample {i})",
+                           f"Diff {title_suffix} (Sample {i})"]]
+                self._plot_and_save(gt_batch[i:i+1], recon_batch[i:i+1], diff_batch[i:i+1],
+                                    slice_save_path, titles=titles)
 
 class Visualize3D(VisualizeBase, viz_type="3d"):
-    def save(self, gt, recon, save_dir, slice_indices=None):
-        batch_size = gt.shape[0]
-        depth_center = gt.shape[2] // 2
-        slice_indices = slice_indices or [depth_center]
+    def save(self, gt, recon, save_dir, global_step, slice_indices=None):
+            batch_size = gt.shape[0]
+            depth_center = gt.shape[2] // 2
+            slice_indices = slice_indices or [depth_center]
 
-        for b in range(batch_size):
-            recon_volume, gt_volume, diff_volume = self._prepare_and_diff(gt[b, 0], recon[b, 0])
+            for b in range(batch_size):
+                recon_volume, gt_volume, diff_volume = self._prepare_and_diff(gt[b, 0], recon[b, 0])
 
-            nib.save(nib.Nifti1Image(recon_volume, affine=np.eye(4)), os.path.join(save_dir, f"recon_b{b}.nii.gz"))
-            nib.save(nib.Nifti1Image(gt_volume, affine=np.eye(4)), os.path.join(save_dir, f"gt_b{b}.nii.gz"))
-            nib.save(nib.Nifti1Image(diff_volume, affine=np.eye(4)), os.path.join(save_dir, f"diff_b{b}.nii.gz"))
+                nib.save(nib.Nifti1Image(recon_volume, affine=np.eye(4)), os.path.join(save_dir, f"recon_step{global_step}_b{b}.nii.gz"))
+                nib.save(nib.Nifti1Image(gt_volume, affine=np.eye(4)), os.path.join(save_dir, f"gt_step{global_step}_b{b}.nii.gz"))
+                nib.save(nib.Nifti1Image(diff_volume, affine=np.eye(4)), os.path.join(save_dir, f"diff_step{global_step}_b{b}.nii.gz"))
 
-            for idx in slice_indices:
-                recon_slice, gt_slice, diff_slice = self._prepare_and_diff(recon_volume[idx], gt_volume[idx])
-                slice_save_path = os.path.join(save_dir, f"slice_{idx}_b{b}.png")
-                titles = [[f"GT B{b} Slice{idx}", f"Recon B{b} Slice{idx}", f"Diff B{b} Slice{idx}"]]
-                self._plot_and_save(gt_slice, recon_slice, diff_slice, slice_save_path, titles=titles)
+                for idx in slice_indices:
+                    recon_slice, gt_slice, diff_slice = self._prepare_and_diff(recon_volume[idx], gt_volume[idx])
+                    slice_save_path = os.path.join(save_dir, f"slice_step{global_step}_{idx}_b{b}.png")
+                    titles = [[f"GT B{b} Slice{idx}", f"Recon B{b} Slice{idx}", f"Diff B{b} Slice{idx}"]]
+                    self._plot_and_save(gt_slice, recon_slice, diff_slice, slice_save_path, titles=titles)
 
 def get_plot_range(data, symmetric=False):
     if symmetric:

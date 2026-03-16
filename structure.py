@@ -16,6 +16,7 @@ from config import load_config
 from multigpu import main_process_only, init_distributed, cleanup
 from viz import Visualize
 from basics import get_autocast_ctx
+import wandb
 
 def main_worker(rank: int, world_size: int, cfg):
     use_cuda = torch.cuda.is_available()
@@ -65,6 +66,9 @@ def main_worker(rank: int, world_size: int, cfg):
     os.makedirs(cfg.paths.save_dir, exist_ok=True)
     log_file = os.path.join(cfg.paths.save_dir, "training_log.txt")
     num_epochs = cfg.training.num_epochs
+    log_metrics = cfg.logging.wandb
+    if log_metrics: wandb.init(project="ct_retcon", config=vars(cfg))
+    print("Compiling: ", cfg.model.compile)
 
     for epoch in range(num_epochs):
         if sampler: sampler.set_epoch(epoch)
@@ -74,8 +78,7 @@ def main_worker(rank: int, world_size: int, cfg):
             print(f"dataset size: {len(dataset)}")
 
         for batch in loader:
-            print(batch.shape)
-            log_metrics = cfg.logging.wandb
+            # print(batch.shape)
             save_diff = cfg.logging.save_volumes and global_step % cfg.logging.viz_every == 0
             save_ckpt = global_step % cfg.training.checkpoint_every == 0
 

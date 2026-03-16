@@ -2,9 +2,35 @@
 name = "dc-gen"
 version = "0.1.0"
 dependencies = [
-    "monai>=1.5.2",
+    "torch",
+    "torchvision",
+    "torchmetrics",
+    "numpy",
+    "timm",
+    "einops",
+    "opencv-python",
+    "tqdm",
+    "torchprofile",
+    "scipy",
+    "torch-fidelity",
+    "diffusers[torch]",
+    "omegaconf",
+    "ipdb",
+    "wandb[media]",
+    "ray",
+    "torchdiffeq",
+    "imageio[ffmpeg]",
+    "huggingface-hub",
+    "transformers",
+    "onnx",
+    "onnxsim",
+    "onnxruntime",
+    "nibabel",
+    "h5py",
+    "matplotlib",
+    "monai",
+    "lpips"
 ]
-
 
 [tool.black]
 line-length = 120
@@ -22,4 +48,20 @@ ensure_newline_before_comments = true
 line_length = 120
 
 [tool.pyright]
-exclude = ["exp*", "assets", "wandb", "tmp*", "dc_gen/c2icore/diffusioncore/efficiency/onnx", "dc_gen/c2icore/diffusioncore/efficiency/training_efficiency", "dc_gen/c2icore/diffusioncore/efficiency/*.json"]
+exclude = [
+    "exp*",
+    "assets",
+    "wandb",
+    "tmp*",
+    "dc_gen/c2icore/diffusioncore/efficiency/onnx",
+    "dc_gen/c2icore/diffusioncore/efficiency/training_efficiency",
+    "dc_gen/c2icore/diffusioncore/efficiency/*.json"
+]
+
+[tool.uv.sources]
+dc-gen = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "dc-gen",
+]

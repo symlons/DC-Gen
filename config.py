@@ -1,4 +1,3 @@
-
 from omegaconf import OmegaConf
 
 def get_default_config():
@@ -53,15 +52,21 @@ class DatasetConfig:
 #     checkpoint_dir: str = "/Users/sfkost/storage/fun"
 #     save_dir: str = "/Users/sfkost/storage/fun"
 
+# @dataclass
+# class PathsConfig:
+#     hdf_path: str = "/mnt/Volume-eV4BofCN/ct_rate_train_batch_0_v13.hdf"
+#     checkpoint_dir: str = "/checkpoints"
+#     save_dir: str = "/mnt/Volume-eV4BofCN/artifacts_3d_33"
+
 @dataclass
 class PathsConfig:
-    hdf_path: str = "/mnt/Volume-eV4BofCN/ct_rate_train_batch_0_v13.hdf"
-    checkpoint_dir: str = "/checkpoints"
-    save_dir: str = "/mnt/Volume-eV4BofCN/artifacts_3d_33"
+    hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
+    checkpoint_dir: str = "/data/checkpoints"
+    save_dir: str = "/data/Volume-eV4BofCN/artifacts_3d_33_2"
 
 @dataclass
 class PipelineConfig:
-    resize_hw: List[Optional[int]] = field(default_factory=lambda: [None, 32, 32])
+    resize_hw: List[Optional[int]] = field(default_factory=lambda: [None, 128, 128])
     n_slices: Optional[int] = 32
 
 @dataclass
@@ -71,11 +76,11 @@ class ObjectiveConfig:
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 5
-    batch_size: int = 2
-    shuffle_data: bool = False
+    num_epochs: int = 350
+    batch_size: int = 12
+    shuffle_data: bool = True
     num_workers: int = 0
-    pin_memory: bool = False
+    pin_memory: bool = True
     prefetch_factor: Optional[int] = None
     device: str = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     dtype: str = "float32"
@@ -86,8 +91,8 @@ class TrainingConfig:
 
 @dataclass
 class HParamsConfig:
-    learning_rate: float = 4e-6
-    weight_decay: float = 1e-2
+    learning_rate: float = 6e-6
+    weight_decay: float = 1e-1
 
 @dataclass
 class ModelConfig:
