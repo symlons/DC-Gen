@@ -33,6 +33,7 @@ class PipelineConfig:
     resize_hw: List[int] = field(default_factory=lambda: [128, 128])
     n_slices: Optional[int] = 32
     resize_depth: Optional[int] = None
+    clip_input_range: Optional[List[float]] = field(default_factory=lambda: [-1000.0, 1000.0])
     normalize_mode: str = "sample"
     normalize_output_range: List[float] = field(default_factory=lambda: [-1.0, 1.0])
     normalize_input_range: Optional[List[float]] = None
@@ -45,17 +46,19 @@ class ExperimentConfig:
 class ObjectiveConfig:
     loss_fn: str = "l1"
     perceptual_weight: float = 0.25
+    detail_weight: float = 0.1
 
 @dataclass
 class TrainingConfig:
     num_epochs: int = 350
-    batch_size: int = 4
+    batch_size: int = 6
     shuffle_data: bool = True
     num_workers: int = 0
     pin_memory: bool = True
     prefetch_factor: Optional[int] = None
     device: str = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     dtype: str = "float32"
+    autocast_dtype: str = "auto"
     resume_from_checkpoint: bool = False
     checkpoint_every: int = 1000
     max_checkpoints: int = 4
@@ -63,7 +66,7 @@ class TrainingConfig:
 
 @dataclass
 class HParamsConfig:
-    learning_rate: float = 4e-5
+    learning_rate: float = 8e-5
     weight_decay: float = 1e-1
 
 @dataclass
@@ -104,6 +107,12 @@ def validate_and_finalize_config(cfg):
     if len(cfg.pipeline.normalize_output_range) != 2:
         raise ValueError("pipeline.normalize_output_range must contain exactly two values")
 
+    if cfg.pipeline.clip_input_range is not None:
+        if len(cfg.pipeline.clip_input_range) != 2:
+            raise ValueError("pipeline.clip_input_range must contain exactly two values")
+        if cfg.pipeline.clip_input_range[0] >= cfg.pipeline.clip_input_range[1]:
+            raise ValueError("pipeline.clip_input_range must be strictly increasing")
+
     if cfg.pipeline.normalize_input_range is not None:
         if len(cfg.pipeline.normalize_input_range) != 2:
             raise ValueError("pipeline.normalize_input_range must contain exactly two values")
@@ -112,6 +121,12 @@ def validate_and_finalize_config(cfg):
 
     if cfg.pipeline.normalize_mode == "fixed" and cfg.pipeline.normalize_input_range is None:
         raise ValueError("pipeline.normalize_input_range must be set when normalize_mode='fixed'")
+
+    if cfg.training.dtype not in {"float32", "float16", "bfloat16"}:
+        raise ValueError("training.dtype must be one of: 'float32', 'float16', 'bfloat16'")
+
+    if cfg.training.autocast_dtype not in {"auto", "float16", "bfloat16"}:
+        raise ValueError("training.autocast_dtype must be one of: 'auto', 'float16', 'bfloat16'")
 
     if cfg.dims == "2d":
         cfg.pipeline.n_slices = None

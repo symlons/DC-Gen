@@ -89,14 +89,24 @@ class Visualize3D(VisualizeBase, viz_type="3d"):
 
             for b in range(batch_size):
                 recon_volume, gt_volume, diff_volume = self._prepare_and_diff(gt[b, 0], recon[b, 0])
+                sample_base = f"step{global_step:07d}_sample{b:03d}"
 
-                nib.save(nib.Nifti1Image(recon_volume, affine=np.eye(4)), os.path.join(save_dir, f"recon_step{global_step}_b{b}.nii.gz"))
-                nib.save(nib.Nifti1Image(gt_volume, affine=np.eye(4)), os.path.join(save_dir, f"gt_step{global_step}_b{b}.nii.gz"))
-                nib.save(nib.Nifti1Image(diff_volume, affine=np.eye(4)), os.path.join(save_dir, f"diff_step{global_step}_b{b}.nii.gz"))
+                nib.save(
+                    nib.Nifti1Image(gt_volume, affine=np.eye(4)),
+                    os.path.join(save_dir, f"{sample_base}_gt.nii.gz"),
+                )
+                nib.save(
+                    nib.Nifti1Image(recon_volume, affine=np.eye(4)),
+                    os.path.join(save_dir, f"{sample_base}_recon.nii.gz"),
+                )
+                nib.save(
+                    nib.Nifti1Image(diff_volume, affine=np.eye(4)),
+                    os.path.join(save_dir, f"{sample_base}_diff.nii.gz"),
+                )
 
                 for idx in slice_indices:
                     recon_slice, gt_slice, diff_slice = self._prepare_and_diff(recon_volume[idx], gt_volume[idx])
-                    slice_save_path = os.path.join(save_dir, f"slice_step{global_step}_{idx}_b{b}.png")
+                    slice_save_path = os.path.join(save_dir, f"{sample_base}_slice{idx:03d}.png")
                     titles = [[f"GT B{b} Slice{idx}", f"Recon B{b} Slice{idx}", f"Diff B{b} Slice{idx}"]]
                     self._plot_and_save(gt_slice, recon_slice, diff_slice, slice_save_path, titles=titles)
 

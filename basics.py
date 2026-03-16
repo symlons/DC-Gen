@@ -3,6 +3,7 @@ import numpy as np
 import os
 import wandb
 import glob
+from contextlib import nullcontext
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -70,7 +71,27 @@ def batch_statistics(batch):
     return sample_stats, overall
 
 
+def resolve_autocast_dtype(cfg, device):
+    requested_dtype = getattr(cfg.training, "autocast_dtype", "auto")
+
+    if device.type == "cuda":
+        if requested_dtype == "auto":
+            return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        if requested_dtype == "bfloat16" and not torch.cuda.is_bf16_supported():
+            return torch.float16
+    elif device.type == "mps":
+        return torch.float16
+    elif device.type == "cpu":
+        return torch.bfloat16
+    else:
+        return None
+
+    return getattr(torch, requested_dtype)
+
+
 def get_autocast_ctx(cfg, device):
     if cfg.training.use_autocast:
-        return torch.autocast(device_type=device.type, dtype=torch.bfloat16)
+        autocast_dtype = resolve_autocast_dtype(cfg, device)
+        if autocast_dtype is not None:
+            return torch.autocast(device_type=device.type, dtype=autocast_dtype, enabled=True)
     return nullcontext()
