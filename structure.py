@@ -102,7 +102,7 @@ def main_worker(rank: int, world_size: int, cfg):
                     print(f"[WARNING] Failed to write to log file {log_file}: {e}")
 
                 print(f"Iter {global_step}: loss={loss.item():.6f}, " f"PSNR={psnr_value:.6f}, SSIM={ssim_value:.6f}")
-                if save_diff: viz.save(batch, recon, save_dir=cfg.paths.save_dir)
+                if save_diff: viz.save(batch, recon, cfg.paths.save_dir, global_step)
                 if log_metrics: wandb.log({"loss": loss.item(), "PSNR": psnr_value, "SSIM": ssim_value}, step=global_step)
                 if save_ckpt: save_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, global_step, checkpoint_queue, cfg.training.max_checkpoints)
 

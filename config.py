@@ -77,7 +77,7 @@ class ObjectiveConfig:
 @dataclass
 class TrainingConfig:
     num_epochs: int = 350
-    batch_size: int = 12
+    batch_size: int = 4
     shuffle_data: bool = True
     num_workers: int = 0
     pin_memory: bool = True

@@ -236,8 +236,11 @@ class ConvPixelUnshuffleDownSampleLayer(nn.Module):
         super().__init__()
         self.factor = factor
         self.dims = dims
-        out_ratio = factor ** dims
         self.downsample_depth = downsample_depth
+        if dims == 3 and not downsample_depth:
+            out_ratio = factor ** 2
+        else:
+            out_ratio = factor ** dims
         assert out_channels % out_ratio == 0
         self.conv = ConvLayer(
             in_channels=in_channels,

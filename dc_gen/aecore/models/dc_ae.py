@@ -56,7 +56,7 @@ class EncoderConfig:
     width_list: tuple[int, ...] = (128, 256, 512, 512, 1024, 1024)
     depth_list: tuple[int, ...] = (2, 2, 2, 2, 2, 2)
     block_type: Any = "ResBlock"
-    norm: Any = "trms2d"
+    norm: Any = "rms2d"
     act: str = "silu"
     downsample_block_type: str = "ConvPixelUnshuffle"
     downsample_match_channel: bool = True
@@ -674,13 +674,14 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
 
         )
         cfg_str = (
-            "latent_channels=32 "
+            "latent_channels=512 "
             "in_channels=1 "
             # "dims=2 "
             # "encoder.downsample_depth=[False,False,False,False,False,False] "
-            "encoder.downsample_depth=[True,True,True,True,True,True] "
+            "encoder.downsample_depth=[False,False,False,True,True,True] "
             "encoder.isotropic=[True,True,True,True,True,True] "
-            "decoder.isotropic=[True,True,True,True,True,True] "
+            # "decoder.isotropic=[True,True,True,True,True,True] "
+            "decoder.isotropic=[False,False,False,True,True,True] "
             # "encoder.isotropic=[False,False,False,False,False,False] "
             # "decoder.isotropic=[False,False,False,False,False,False] "
             "dims=3 "

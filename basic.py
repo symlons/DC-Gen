@@ -43,7 +43,8 @@ volume = modal.Volume.from_name("training_data")
     secrets=[modal.Secret.from_name("wandb-key")],
     volumes={"/data": volume},
     serialized=False,
-    timeout=3600 * 4
+    timeout=3600 * 4,
+    retries=0
 )
 def run_training():
     os.makedirs("/data/checkpoints", exist_ok=True)
