@@ -78,13 +78,13 @@ class DecoderConfig:
     width_list: tuple[int, ...] = (128, 256, 512, 512, 1024, 1024)
     depth_list: tuple[int, ...] = (2, 2, 2, 2, 2, 2)
     block_type: Any = "ResBlock"
-    norm: Any = "trms2d"
+    norm: Any = "rms2d"
     act: Any = "silu"
     upsample_block_type: str = "ConvPixelShuffle"
     upsample_match_channel: bool = True
     upsample_shortcut: str = "duplicating"
     upsample_factor_list: Optional[Any] = None
-    out_norm: str = "trms2d"
+    out_norm: str = "rms2d"
     out_act: str = "relu"
     dims: str = "2d"
 
@@ -93,6 +93,7 @@ class DecoderConfig:
 class DCAEConfig(BaseAEConfig):
     in_channels: int = 3
     latent_channels: int = 32
+    dims: str = "2d"
     encoder: EncoderConfig = field(
         default_factory=lambda: EncoderConfig(in_channels="${..in_channels}", latent_channels="${..latent_channels}", dims="${..dims}")
     )
@@ -699,7 +700,8 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
             "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
-            "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+            # "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+            "decoder.norm=rms2d decoder.act=silu"
         )
     elif name == "dc-ae-f32c32-in-1.0_3d-depth-last":
         cfg_str = (
@@ -710,7 +712,8 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
             "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
-            "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+            # "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+            "decoder.norm=rms2d decoder.act=silu"
         )
     elif name in ["dc-ae-f32c32-in-1.0", "dc-ae-f32c32-in-1.0_2d", "dc-ae-f32c32-in-1.0-256px", "dc-ae-f32c32-mix-1.0"]:
         cfg_str = (
@@ -719,7 +722,8 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
-            "decoder.norm=[bn2d,bn2d,bn2d,bn2d,bn2d,bn2d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+            # "decoder.norm=[bn2d,bn2d,bn2d,bn2d,bn2d,bn2d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+            "decoder.norm=rms2d decoder.act=silu"
         )
     elif name in ["dc-ae-f32c32-sana-1.0"]:
         cfg_str = (
@@ -730,7 +734,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,EViTS5GLU,EViTS5GLU,EViTS5GLU] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[3,3,3,3,3,3] "
             "decoder.upsample_block_type=InterpolateConv "
-            "decoder.norm=trms2d decoder.act=silu "
+            "decoder.norm=rms2d decoder.act=silu "
             "scaling_factor=0.41407"
         )
     elif name in ["dc-ae-f32c32-sana-1.1"]:
@@ -742,7 +746,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,EViTS5GLU,EViTS5GLU,EViTS5GLU] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[3,3,3,3,3,3] "
             "decoder.upsample_block_type=InterpolateConv "
-            "decoder.norm=trms2d decoder.act=silu "
+            "decoder.norm=rms2d decoder.act=silu "
             "pretrained_source=dc-ae-train "
             "scaling_factor=0.41407"
         )
@@ -779,7 +783,7 @@ def dc_ae_f64c128(name: str, pretrained_path: Optional[str] = None) -> DCAEConfi
             "encoder.width_list=[128,256,512,512,1024,1024,2048] encoder.depth_list=[0,4,8,2,2,2,2] "
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,EViTGLU,EViTGLU,EViTGLU,EViTGLU] "
             "decoder.width_list=[128,256,512,512,1024,1024,2048] decoder.depth_list=[0,5,10,2,2,2,2] "
-            "decoder.norm=[bn2d,bn2d,bn2d,trms2d,trms2d,trms2d,trms2d] decoder.act=[relu,relu,relu,silu,silu,silu,silu]"
+            "decoder.norm=[bn2d,bn2d,bn2d,rms2d,rms2d,rms2d,rms2d] decoder.act=[relu,relu,relu,silu,silu,silu,silu]"
         )
     else:
         raise NotImplementedError
@@ -797,7 +801,7 @@ def dc_ae_f128c512(name: str, pretrained_path: Optional[str] = None) -> DCAEConf
             "encoder.width_list=[128,256,512,512,1024,1024,2048,2048] encoder.depth_list=[0,4,8,2,2,2,2,2] "
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,EViTGLU,EViTGLU,EViTGLU,EViTGLU,EViTGLU] "
             "decoder.width_list=[128,256,512,512,1024,1024,2048,2048] decoder.depth_list=[0,5,10,2,2,2,2,2] "
-            "decoder.norm=[bn2d,bn2d,bn2d,trms2d,trms2d,trms2d,trms2d,trms2d] decoder.act=[relu,relu,relu,silu,silu,silu,silu,silu]"
+            "decoder.norm=[bn2d,bn2d,bn2d,rms2d,rms2d,rms2d,rms2d,rms2d] decoder.act=[relu,relu,relu,silu,silu,silu,silu,silu]"
         )
     else:
         raise NotImplementedError

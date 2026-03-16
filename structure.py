@@ -5,7 +5,7 @@ import os
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
-from monai.transforms import Compose, ScaleIntensity, Resize
+from monai.transforms import Compose, Resize, ScaleIntensity, ScaleIntensityRange
 from monai.losses import PerceptualLoss
 
 from registry import dataset_registry, loss_registry
@@ -18,12 +18,68 @@ from viz import Visualize
 from basics import get_autocast_ctx
 import wandb
 
+
+def print_config_summary(cfg):
+    print("Config summary")
+    print(f"  Experiment   : {cfg.experiment.name}")
+    print(f"  Dims         : {cfg.dims}")
+    print(f"  Model        : {cfg.model.name}")
+    print(f"  Compile      : {cfg.model.compile}")
+    print(f"  Dataset      : {cfg.dataset.name}")
+    print(f"  Groups       : {cfg.dataset.group_names}")
+    print(f"  HDF Path     : {cfg.paths.hdf_path}")
+    print(f"  Save Dir     : {cfg.paths.save_dir}")
+    print(f"  Checkpoints  : {cfg.paths.checkpoint_dir}")
+    print(f"  Resize H/W   : {cfg.pipeline.resize_hw}")
+    print(f"  Resize Depth : {cfg.pipeline.resize_depth}")
+    print(f"  N Slices     : {cfg.pipeline.n_slices}")
+    print(f"  Norm Mode    : {cfg.pipeline.normalize_mode}")
+    print(f"  Norm Out     : {cfg.pipeline.normalize_output_range}")
+    print(f"  Norm In      : {cfg.pipeline.normalize_input_range}")
+    print(f"  Epochs       : {cfg.training.num_epochs}")
+    print(f"  Batch Size   : {cfg.training.batch_size}")
+    print(f"  Num Workers  : {cfg.training.num_workers}")
+    print(f"  DType        : {cfg.training.dtype}")
+    print(f"  Autocast     : {cfg.training.use_autocast}")
+    print(f"  LR           : {cfg.hparams.learning_rate}")
+    print(f"  Weight Decay : {cfg.hparams.weight_decay}")
+    print(f"  Loss         : {cfg.objective.loss_fn}")
+    print(f"  Perc Weight  : {cfg.objective.perceptual_weight}")
+    print(f"  WandB        : {cfg.logging.wandb}")
+    print(f"  Viz Every    : {cfg.logging.viz_every}")
+    print()
+
+
+def build_pipeline(cfg):
+    output_min, output_max = cfg.pipeline.normalize_output_range
+
+    if cfg.pipeline.normalize_mode == "fixed":
+        input_min, input_max = cfg.pipeline.normalize_input_range
+        normalize = ScaleIntensityRange(
+            a_min=input_min,
+            a_max=input_max,
+            b_min=output_min,
+            b_max=output_max,
+            clip=True,
+        )
+    else:
+        normalize = ScaleIntensity(minv=output_min, maxv=output_max)
+
+    if cfg.dims == "2d":
+        spatial_size = tuple(cfg.pipeline.resize_hw)
+    else:
+        resize_depth = cfg.pipeline.resize_depth if cfg.pipeline.resize_depth is not None else cfg.pipeline.n_slices
+        spatial_size = (resize_depth, *cfg.pipeline.resize_hw)
+
+    return Compose([normalize, Resize(spatial_size=spatial_size)])
+
+
 def main_worker(rank: int, world_size: int, cfg):
     use_cuda = torch.cuda.is_available()
     device = torch.device("mps" if torch.backends.mps.is_available() and not use_cuda else f"cuda:{rank}" if use_cuda else "cpu")
     if use_cuda and world_size > 1: init_distributed(rank, world_size)
 
-    pipeline = Compose([ScaleIntensity(minv=-1, maxv=1), Resize(spatial_size=cfg.pipeline.resize_hw)])
+    pipeline = build_pipeline(cfg)
     dataset_cls = dataset_registry[cfg.dataset.name]
     dataset = dataset_cls(
         hdf_path=cfg.paths.hdf_path,
@@ -69,7 +125,6 @@ def main_worker(rank: int, world_size: int, cfg):
     num_epochs = cfg.training.num_epochs
     log_metrics = cfg.logging.wandb
     if log_metrics: wandb.init(project="ct_retcon", config=vars(cfg))
-    print("Compiling: ", cfg.model.compile)
     print(model)
 
     for epoch in range(num_epochs):

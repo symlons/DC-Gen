@@ -15,11 +15,21 @@ schema Paths:
 schema Pipeline:
     resize_hw: [int]
     n_slices?: int
+    resize_depth?: int
+    normalize_mode: "sample" | "fixed"
+    normalize_output_range: [float]
+    normalize_input_range?: [float]
 
     check:
         len(resize_hw) == 2, "resize_hw must be [H, W]"
         resize_hw[0] > 0 and resize_hw[1] > 0, "resize_hw dimensions must be positive"
         n_slices > 0 if n_slices, "n_slices must be positive"
+        resize_depth > 0 if resize_depth, "resize_depth must be positive"
+        len(normalize_output_range) == 2, "normalize_output_range must have two values"
+        len(normalize_input_range) == 2 if normalize_input_range, "normalize_input_range must have two values"
+
+schema Experiment:
+    name?: str
 
 schema Training:
     num_epochs: int = 10
@@ -74,6 +84,7 @@ schema Logging:
 
 schema Config:
     dims: "2d" | "3d"
+    experiment: Experiment
     dataset: Dataset
     paths: Paths
     pipeline: Pipeline

@@ -271,7 +271,7 @@ class DiT(BaseDiffusionModel):
                             act_func=("silu", "silu", None),
                         ),
                         shortcut=nn.Identity(),
-                        pre_norm=build_norm("trms2d", self.cfg.hidden_size),
+                        pre_norm=build_norm("rms2d", self.cfg.hidden_size),
                     )
                     for _ in range(self.cfg.patch_ffn_depth)
                 ]

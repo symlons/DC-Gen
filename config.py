@@ -1,44 +1,8 @@
-from omegaconf import OmegaConf
-
-def get_default_config():
-    cfg = OmegaConf.create({
-        "paths": {
-            # "hdf_path": "/mnt/SFS-iCxS1nYm/ct_rate_train_batch_0_v13.hdf",
-            "hdf_path": "/data/ct_rate_train_batch_0_v13.hdf",
-            "save_dir": "artifacts_3d_33",
-            "checkpoint_dir": "/data/checkpoints"
-        },
-        "training": {
-            "batch_size": 128,
-            "num_epochs": 2000,
-            "shuffle_data": True,
-            "diff_save_every": 250,
-            "checkpoint_every": 1000,
-            "max_checkpoints": 5,
-            "lr": 8e-5,
-            "device": "cuda",
-            "dtype": "bfloat16",
-            "loss_fn": "l1",
-            "perceptual_weight": 0.25,
-            "resume_from_checkpoint": False,
-            "checkpoint_path": "/mnt/SFS-iCxS1nYm/DC-Gen/3d_experiments/checkpoints/checkpoint_iter4000.pt"
-        },
-        "dataset": {
-            "name": "CTVolume",
-            "group_names": ["Vol_full"],
-            "volume": True
-        },
-        "model": {"name": "dc-ae-f32c32-in-1.0"},
-        "pipeline": {"n_slices": 32, "resize_hw": [128, 128]},
-        "wandb": {"enabled": False, "project": "ct_recon", "run_name": "dc_ae_experiment"},
-        "logging": {"save_volumes": True, "save_training_curves": True}
-    })
-    return cfg
-
 import torch
 from dataclasses import dataclass, field
 from typing import List, Optional
 from omegaconf import OmegaConf
+
 
 @dataclass
 class DatasetConfig:
@@ -66,8 +30,16 @@ class PathsConfig:
 
 @dataclass
 class PipelineConfig:
-    resize_hw: List[Optional[int]] = field(default_factory=lambda: [None, 128, 128])
+    resize_hw: List[int] = field(default_factory=lambda: [128, 128])
     n_slices: Optional[int] = 32
+    resize_depth: Optional[int] = None
+    normalize_mode: str = "sample"
+    normalize_output_range: List[float] = field(default_factory=lambda: [-1.0, 1.0])
+    normalize_input_range: Optional[List[float]] = None
+
+@dataclass
+class ExperimentConfig:
+    name: Optional[str] = None
 
 @dataclass
 class ObjectiveConfig:
@@ -96,7 +68,7 @@ class HParamsConfig:
 
 @dataclass
 class ModelConfig:
-    name: str = "dc-ae-f32c32-in-1.0_3d"
+    name: str = "dc-ae-f32c32-in-1.0_3d-depth-last"
     compile: bool = True
 
 @dataclass
@@ -108,6 +80,7 @@ class LoggingConfig:
 @dataclass
 class Config:
     dims: str = "3d"
+    experiment: ExperimentConfig = field(default_factory=ExperimentConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
@@ -117,9 +90,49 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
+
+def validate_and_finalize_config(cfg):
+    if cfg.dims not in {"2d", "3d"}:
+        raise ValueError(f"Unsupported dims={cfg.dims!r}, expected '2d' or '3d'")
+
+    if len(cfg.pipeline.resize_hw) != 2 or any(dim is None or dim <= 0 for dim in cfg.pipeline.resize_hw):
+        raise ValueError("pipeline.resize_hw must be a 2-element list of positive integers")
+
+    if cfg.pipeline.normalize_mode not in {"sample", "fixed"}:
+        raise ValueError("pipeline.normalize_mode must be one of: 'sample' or 'fixed'")
+
+    if len(cfg.pipeline.normalize_output_range) != 2:
+        raise ValueError("pipeline.normalize_output_range must contain exactly two values")
+
+    if cfg.pipeline.normalize_input_range is not None:
+        if len(cfg.pipeline.normalize_input_range) != 2:
+            raise ValueError("pipeline.normalize_input_range must contain exactly two values")
+        if cfg.pipeline.normalize_input_range[0] >= cfg.pipeline.normalize_input_range[1]:
+            raise ValueError("pipeline.normalize_input_range must be strictly increasing")
+
+    if cfg.pipeline.normalize_mode == "fixed" and cfg.pipeline.normalize_input_range is None:
+        raise ValueError("pipeline.normalize_input_range must be set when normalize_mode='fixed'")
+
+    if cfg.dims == "2d":
+        cfg.pipeline.n_slices = None
+        cfg.pipeline.resize_depth = None
+        if "_3d" in cfg.model.name:
+            raise ValueError(f"2D config cannot use 3D model name: {cfg.model.name}")
+    else:
+        if "_3d" not in cfg.model.name:
+            raise ValueError(f"3D config should use a 3D model variant, got: {cfg.model.name}")
+        if cfg.pipeline.n_slices is None and cfg.pipeline.resize_depth is None:
+            raise ValueError("3D config must set pipeline.n_slices or pipeline.resize_depth")
+
+    if cfg.experiment.name is None:
+        cfg.experiment.name = cfg.model.name
+
+    return cfg
+
 def load_config(yaml_path: str = None):
     cfg = OmegaConf.structured(Config)
     if yaml_path:
         yaml_cfg = OmegaConf.load(yaml_path)
         cfg = OmegaConf.merge(cfg, yaml_cfg)
-    return cfg
+    cfg = OmegaConf.to_object(cfg)
+    return validate_and_finalize_config(cfg)
