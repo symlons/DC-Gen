@@ -38,7 +38,7 @@ cuda_image = (
 volume = modal.Volume.from_name("training_data")
 
 @app.function(
-    gpu="H200",
+    gpu="H100",
     image=cuda_image,
     secrets=[modal.Secret.from_name("wandb-key")],
     volumes={"/data": volume},
