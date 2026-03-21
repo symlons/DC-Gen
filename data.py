@@ -13,7 +13,7 @@ class HDF5Backend:
         self.load_volumes = dims == "3d"
         self.n_slices = n_slices
         self.index_map = []
-        self._h5_file = h5py.File(self.hdf_path, "r")  # persistent file handle
+        self._h5_file = h5py.File(self.hdf_path, "r")
         self._build_index_map()
 
     def _build_index_map(self):
@@ -45,10 +45,10 @@ class HDF5Backend:
         else:
             if len(dataset.shape) == 3:
                 vol = dataset[slice_idx]
-            else:  # 4D
+            else:
                 vol = dataset[0, slice_idx]
             vol = vol[None, ...]
-        return torch.from_numpy(vol).float()
+        return torch.from_numpy(vol.copy()).float()
 
     def index_map_preview(self):
         return [(g, k, s, sh) for g, k, s, sh in self.index_map]
@@ -83,7 +83,7 @@ class NiftiBackend:
     def _build_index_map(self):
         for file in self.files:
             img = nib.load(file)
-            total_slices = img.shape[0]
+            total_slices = img.shape[2]
             start, end = 0, total_slices
             if self.n_slices is not None and self.n_slices < total_slices:
                 start = (total_slices - self.n_slices) // 2
@@ -99,16 +99,19 @@ class NiftiBackend:
         entry = self.index_map[idx]
         file = entry[0]
         img = nib.load(file)
+
         if self.load_volumes:
             start, end = entry[1]
-            vol = img.dataobj[start:end]
-            if vol.ndim == 3:
-                vol = vol[None, ...]
+            vol = img.dataobj[..., start:end]
+            vol = np.asarray(vol).copy()
+            vol = np.transpose(vol, (2, 0, 1))
+            vol = vol[None, ...]
         else:
             s = entry[1]
-            vol = img.dataobj[s]
+            vol = img.dataobj[..., s]
+            vol = np.asarray(vol).copy()
             vol = vol[None, ...]
-        return torch.from_numpy(np.array(vol)).float()
+        return torch.from_numpy(vol).float()
 
     def index_map_preview(self):
         return [(f, s, sh) for f, s, sh in self.index_map]

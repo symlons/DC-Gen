@@ -17,7 +17,48 @@ from multigpu import main_process_only, init_distributed, cleanup
 from viz import Visualize
 from basics import get_autocast_ctx, resolve_autocast_dtype
 import wandb
+import re
 
+def configure_trainable_params(model, trainable_ae_params):
+    if trainable_ae_params is None:
+        return [{"params": list(model.parameters())}]
+
+    base_model = model._orig_mod if hasattr(model, "_orig_mod") else model
+    named_params = list(base_model.named_parameters())
+
+    used = set()
+    groups = []
+    total_matched = 0
+
+    for names in trainable_ae_params:
+        params = []
+        for pattern_ in names:
+            pattern = re.compile(pattern_)
+            matched = False
+            for p_name, param in named_params:
+                if re.search(pattern, p_name):
+                    pid = id(param)
+                    if pid not in used:
+                        params.append(param)
+                        used.add(pid)
+                        total_matched += param.numel()
+                    matched = True
+            if not matched:
+                print(f"[WARNING] No match for pattern: {pattern_}")
+        groups.append({"params": params})
+
+    if total_matched == 0:
+        print("[WARNING] No parameters matched ANY pattern — nothing will be trained.")
+
+    train_params = set(p for g in groups for p in g["params"])
+
+    for p in model.parameters():
+        p.requires_grad = False
+
+    for p in train_params:
+        p.requires_grad = True
+
+    return groups
 
 class ClampIntensity:
     def __init__(self, min_value: float, max_value: float):
@@ -76,8 +117,63 @@ def print_config_summary(cfg, device):
     print(f"  Detail Weight: {cfg.objective.detail_weight}")
     print(f"  WandB        : {cfg.logging.wandb}")
     print(f"  Viz Every    : {cfg.logging.viz_every}")
+    print(f"  Validate Every: {cfg.logging.validate_every}")
     print()
 
+def print_param_group_modules(model, param_groups):
+    named_params = dict(model.named_parameters())
+
+    id_to_module = {}
+    for name, param in named_params.items():
+        module_name = ".".join(name.split(".")[:-1])
+        id_to_module[id(param)] = module_name
+
+    total_params = sum(p.numel() for p in model.parameters())
+    train_params = set(p for g in param_groups for p in g["params"])
+    trainable_params = sum(p.numel() for p in train_params)
+
+    if trainable_params == 0:
+        raise ValueError("No trainable parameters selected")
+
+    pct = 100.0 * trainable_params / total_params if total_params > 0 else 0.0
+
+    print("Parameter summary:")
+    print(f"  Total params     : {total_params:,}")
+    print(f"  Trainable params : {trainable_params:,}")
+    print(f"  Trainable %      : {pct:.4f}%")
+
+    print("\nParameter groups (module structure):")
+
+    modules_dict = dict(model.named_modules())
+
+    for i, group in enumerate(param_groups):
+        params = group["params"]
+        num_elements = sum(p.numel() for p in params)
+        group_pct = 100.0 * num_elements / total_params if total_params > 0 else 0.0
+
+        print(f"\nGroup {i}: {num_elements:,} elements ({group_pct:.4f}%)")
+
+        printed_modules = set()
+
+        for p in params:
+            module_name = id_to_module.get(id(p))
+            if module_name is None:
+                continue
+
+            parts = module_name.split(".")
+            key = ".".join(parts[:2])
+
+            if key in printed_modules:
+                continue
+
+            printed_modules.add(key)
+
+            try:
+                submodule = modules_dict[key]
+                print(f"\n--- {key} ---")
+                print(submodule)
+            except KeyError:
+                print(f"[WARNING] Module not found: {key}")
 
 def tensor_stats_dict(name: str, tensor: torch.Tensor) -> dict[str, float]:
     tensor = tensor.detach().float()
@@ -137,7 +233,6 @@ def build_pipeline(cfg):
     transforms.append(Resize(spatial_size=spatial_size))
     return Compose(transforms), clip_transform
 
-
 def main_worker(rank: int, world_size: int, cfg):
     use_cuda = torch.cuda.is_available()
     device = torch.device("mps" if torch.backends.mps.is_available() and not use_cuda else f"cuda:{rank}" if use_cuda else "cpu")
@@ -146,7 +241,15 @@ def main_worker(rank: int, world_size: int, cfg):
     pipeline, clip_transform = build_pipeline(cfg)
     dataset_cls = dataset_registry[cfg.dataset.name]
     dataset = dataset_cls(
-        hdf_path=cfg.paths.hdf_path,
+        nifti_dir=cfg.paths.nifti_dir,
+        group_names=cfg.dataset.group_names,
+        dims=cfg.dims,
+        n_slices=cfg.pipeline.n_slices,
+        transform=pipeline
+    )
+
+    val_dataset = dataset_cls(
+        nifti_dir=cfg.paths.nifti_val_dir,
         group_names=cfg.dataset.group_names,
         dims=cfg.dims,
         n_slices=cfg.pipeline.n_slices,
@@ -166,8 +269,21 @@ def main_worker(rank: int, world_size: int, cfg):
         sampler=sampler
     )
 
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.training.batch_size * 2,
+        shuffle=False,
+        pin_memory=cfg.training.pin_memory,
+        num_workers=cfg.training.num_workers,
+        prefetch_factor=cfg.training.prefetch_factor,
+    )
+
     dtype = getattr(torch, cfg.training.dtype)
     model = DCAE_HF(model_name=cfg.model.name).to(dtype=dtype, device=device)
+    trainable_ae_params = [ ["encoder.project_out.*", "decoder.project_in.*"] ]
+    # trainable_ae_params = None
+    param_groups = configure_trainable_params(model, trainable_ae_params)
+    print_param_group_modules(model, param_groups)
 
     if getattr(cfg.model, "compile", False): model = torch.compile(model)
     if use_cuda and world_size > 1: model = wrap_ddp(model, device, rank, world_size)
@@ -184,7 +300,7 @@ def main_worker(rank: int, world_size: int, cfg):
     detail_weight = cfg.objective.detail_weight
 
     viz = Visualize(viz_type=cfg.dims)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.hparams.learning_rate, weight_decay=cfg.hparams.weight_decay)
+    optimizer = torch.optim.AdamW(param_groups, lr=cfg.hparams.learning_rate, weight_decay=cfg.hparams.weight_decay)
     global_step = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device)
 
     loss_history, psnr_history, ssim_history = [], [], []
@@ -204,10 +320,11 @@ def main_worker(rank: int, world_size: int, cfg):
             print(f"epoch: {epoch} out of {num_epochs}")
             print(f"dataset size: {len(dataset)}")
 
-        for batch in loader:
-            # print(batch.shape)
+        for i, batch in enumerate(loader):
+            if i == 0: print(f"  batch shape: {batch.shape}")
             save_diff = cfg.logging.save_volumes and global_step % cfg.logging.viz_every == 0
             save_ckpt = global_step % cfg.training.checkpoint_every == 0
+            do_validation = cfg.logging.validate_every is not None and global_step % cfg.logging.validate_every == 0
             raw_batch_range = None
             if clip_transform is not None:
                 raw_batch_range = clip_transform.pop_batch_ranges(len(batch))
@@ -225,7 +342,7 @@ def main_worker(rank: int, world_size: int, cfg):
             detail_dims = (-2, -1)
             detail_loss = finite_difference_loss(recon.float(), batch.float(), dims=detail_dims)
             loss = recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss
-
+            # --- Metircs
             with main_process_only():
                 with torch.no_grad():
                     loss_value, psnr_value, ssim_value, slice_psnr_value, slice_ssim_value = evaluate(
@@ -285,6 +402,45 @@ def main_worker(rank: int, world_size: int, cfg):
                     wandb.log(wandb_metrics, step=global_step)
                     if wandb.run is not None and wandb_range_text is not None:
                         wandb.run.summary["raw_input_range_text"] = wandb_range_text
+                if do_validation:
+                    print("Running validation...")
+                    val_losses, val_psnrs, val_ssims, val_slice_psnrs, val_slice_ssims = [], [], [], [], []
+                    total = len(val_loader)
+
+                    with torch.inference_mode():
+                        model.eval()
+                        for i, batch in enumerate(val_loader):
+                            batch = batch.to(dtype=dtype, device=device, non_blocking=True)
+
+                            with get_autocast_ctx(cfg, device): recon = model.decoder(model.encoder(batch))
+
+                            loss_value, psnr_value, ssim_value, slice_psnr_value, slice_ssim_value = evaluate(recon, batch, loss)
+
+                            val_losses.append(loss_value)
+                            val_psnrs.append(psnr_value)
+                            val_ssims.append(ssim_value)
+                            val_slice_psnrs.append(slice_psnr_value)
+                            val_slice_ssims.append(slice_ssim_value)
+
+                            print(f"\rValidation [{i+1}/{total}]", end="")
+                    print()
+
+                    val_loss = torch.tensor(val_losses).mean().item()
+                    val_psnr = torch.tensor(val_psnrs).mean().item()
+                    val_ssim = torch.tensor(val_ssims).mean().item()
+                    val_slice_psnr = torch.tensor(val_slice_psnrs).mean().item()
+                    val_slice_ssim = torch.tensor(val_slice_ssims).mean().item()
+
+                    print(f"Validation Loss: {val_loss:.6f}, PSNR: {val_psnr:.6f}, SSIM: {val_ssim:.6f}, Slice PSNR: {val_slice_psnr:.6f}, Slice SSIM: {val_slice_ssim:.6f}")
+                    
+                    if log_metrics:
+                        wandb.log({
+                            "val_loss/total": val_loss,
+                            "val_metrics/psnr": val_psnr,
+                            "val_metrics/ssim": val_ssim,
+                            "val_metrics/slice_psnr": val_slice_psnr,
+                            "val_metrics/slice_ssim": val_slice_ssim,
+                            }, step=global_step)
                 if save_ckpt: save_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, global_step, checkpoint_queue, cfg.training.max_checkpoints)
 
             optimizer.zero_grad(); loss.backward(); optimizer.step()

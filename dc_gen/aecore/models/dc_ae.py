@@ -691,7 +691,18 @@ class DCAE(BaseAE):
 
 
 def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
-    if name in ["dc-ae-f32c32-in-1.0_3d", "dc-ae-f32c32-in-1.0-256px_3d", "dc-ae-f32c32-mix-1.0_3d"]:
+    if name == "dc-ae-f32c32-in-1.0_3d":
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=32 "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[2,2,2,3,3,3] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[3,3,3,3,3,3] "
+            "decoder.norm=rms2d decoder.act=silu"
+        )
+    elif name == "dc-ae-f32c32-in-1.0_3d_deeper":
         cfg_str = (
             "dims=3d "
             "in_channels=1 "
@@ -700,7 +711,6 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
             "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
-            # "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
             "decoder.norm=rms2d decoder.act=silu"
         )
     elif name == "dc-ae-f32c32-in-1.0_3d-depth-last":

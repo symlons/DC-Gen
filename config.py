@@ -25,8 +25,10 @@ class DatasetConfig:
 @dataclass
 class PathsConfig:
     hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
-    checkpoint_dir: str = "/data/checkpoints_4"
-    save_dir: str = "/data/Volume-eV4BofCN/artifacts_3d_33_4"
+    checkpoint_dir: str = "/data/checkpoints_5"
+    save_dir: str = "/data/Volume-eV4BofCN/artifacts_3d_33_5"
+    nifti_dir: str = "/mnt/Volume-eV4BofCN/storage_processed/dataset/train"
+    nifti_val_dir: str = "/mnt/Volume-eV4BofCN/storage_processed/dataset/train"
 
 @dataclass
 class PipelineConfig:
@@ -51,9 +53,9 @@ class ObjectiveConfig:
 @dataclass
 class TrainingConfig:
     num_epochs: int = 350
-    batch_size: int = 6
+    batch_size: int = 2
     shuffle_data: bool = True
-    num_workers: int = 0
+    num_workers: int = 8
     pin_memory: bool = True
     prefetch_factor: Optional[int] = None
     device: str = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
@@ -71,14 +73,15 @@ class HParamsConfig:
 
 @dataclass
 class ModelConfig:
-    name: str = "dc-ae-f32c32-in-1.0_3d"
+    name: str = "dc-ae-f32c32-in-1.0_3d-depth-last"
     compile: bool = True
 
 @dataclass
 class LoggingConfig:
-    wandb: bool = True
+    wandb: bool = False
     save_volumes: bool = True
     viz_every: int = 500
+    validate_every: int = 10
 
 @dataclass
 class Config:
