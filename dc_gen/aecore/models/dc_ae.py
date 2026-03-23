@@ -54,6 +54,7 @@ class EncoderConfig:
     latent_channels: int = MISSING
     width_list: tuple[int, ...] = (128, 256, 512, 512, 1024, 1024)
     depth_list: tuple[int, ...] = (2, 2, 2, 2, 2, 2)
+    kernel_size: Any = 3
     block_type: Any = "ResBlock"
     norm: Any = "rms2d"
     act: str = "silu"
@@ -77,6 +78,7 @@ class DecoderConfig:
     in_shortcut: Optional[str] = "duplicating"
     width_list: tuple[int, ...] = (128, 256, 512, 512, 1024, 1024)
     depth_list: tuple[int, ...] = (2, 2, 2, 2, 2, 2)
+    kernel_size: Any = 3
     block_type: Any = "ResBlock"
     norm: Any = "rms2d"
     act: Any = "silu"
@@ -110,7 +112,12 @@ class DCAEConfig(BaseAEConfig):
 
 
 def build_block(
-    block_type: str, in_channels: int, out_channels: int, norm: Optional[str], act: Optional[str]
+    block_type: str,
+    in_channels: int,
+    out_channels: int,
+    norm: Optional[str],
+    act: Optional[str],
+    kernel_size: int | tuple[int, ...] = 3,
 ) -> nn.Module:
     cfg = block_type.split("@")
     block_name = cfg[0]
@@ -119,7 +126,7 @@ def build_block(
         main_block = ResBlock(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=3,
+            kernel_size=kernel_size,
             stride=1,
             use_bias=(True, False),
             norm=(None, norm),
@@ -132,7 +139,7 @@ def build_block(
         main_block = ResBlock(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=3,
+            kernel_size=kernel_size,
             stride=1,
             use_bias=(True, False),
             norm=(None, norm_3d),
@@ -145,7 +152,7 @@ def build_block(
         main_block = GLUResBlock(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=3,
+            kernel_size=kernel_size,
             gate_kernel_size=int(cfg[1]),
             stride=1,
             use_bias=(True, False),
@@ -158,7 +165,7 @@ def build_block(
         main_block = ChannelAttentionResBlock(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=3,
+            kernel_size=kernel_size,
             stride=1,
             use_bias=(True, False),
             norm=(None, norm),
@@ -207,7 +214,13 @@ def build_block(
 
 
 def build_stage_main(
-    width: int, depth: int, block_type: str | list[str], norm: str, act: str, input_width: int
+    width: int,
+    depth: int,
+    block_type: str | list[str],
+    norm: str,
+    act: str,
+    input_width: int,
+    kernel_size: int | tuple[int, ...] = 3,
 ) -> list[nn.Module]:
     assert isinstance(block_type, str) or (isinstance(block_type, list) and depth == len(block_type))
     stage = []
@@ -219,6 +232,7 @@ def build_stage_main(
             out_channels=width,
             norm=norm,
             act=act,
+            kernel_size=kernel_size,
         )
         stage.append(block)
     return stage
@@ -231,12 +245,13 @@ def build_downsample_block(
     shortcut: Optional[str],
     dims: str = "2d",
     factor: int | tuple[int, ...] = 2,
+    kernel_size: int | tuple[int, ...] = 3,
 ) -> nn.Module:
     if block_type == "Conv":
         block = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=3,
+            kernel_size=kernel_size,
             stride=factor,
             use_bias=True,
             norm=None,
@@ -245,7 +260,7 @@ def build_downsample_block(
         )
     elif block_type == "ConvPixelUnshuffle":
         block = ConvPixelUnshuffleDownSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=factor, dims=dims
+            in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, factor=factor, dims=dims
         )
     else:
         raise ValueError(f"block_type {block_type} is not supported for downsampling")
@@ -268,10 +283,11 @@ def build_upsample_block(
     shortcut: Optional[str],
     dims: str = "2d",
     factor: int | tuple[int, ...] = 2,
+    kernel_size: int | tuple[int, ...] = 3,
 ) -> nn.Module:
     if block_type == "ConvPixelShuffle":
         block = ConvPixelShuffleUpSampleLayer(
-            in_channels=in_channels, out_channels=out_channels, kernel_size=3, factor=factor, dims=dims
+            in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, factor=factor, dims=dims
         )
     elif block_type == "InterpolateConv":
         block = InterpolateConvUpSampleLayer(
@@ -297,13 +313,13 @@ def build_encoder_project_in_block(
     factor: int | tuple[int, ...],
     downsample_block_type: str,
     dims: str = "2d",
+    kernel_size: int | tuple[int, ...] = 3,
 ):
-    print(f"Building encoder project in block with in_channels={in_channels}, out_channels={out_channels}, factor={factor}, downsample_block_type={downsample_block_type}")
     if _is_identity_factor(factor):
         block = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=3,
+            kernel_size=kernel_size,
             stride=1,
             use_bias=True,
             norm=None,
@@ -318,6 +334,7 @@ def build_encoder_project_in_block(
             shortcut=None,
             dims=dims,
             factor=factor,
+            kernel_size=kernel_size,
         )
     return block
 
@@ -330,6 +347,7 @@ def build_encoder_project_out_block(
     act: Optional[str],
     shortcut: Optional[str],
     dims: str = "2d",
+    kernel_size: int | tuple[int, ...] = 3,
 ):
     block = [build_norm(norm), build_act(act)]
     if block_type == "ConvLayer":
@@ -337,7 +355,7 @@ def build_encoder_project_out_block(
             ConvLayer(
                 in_channels=in_channels,
                 out_channels=out_channels,
-                kernel_size=3,
+                kernel_size=kernel_size,
                 stride=1,
                 use_bias=True,
                 norm=None,
@@ -372,13 +390,18 @@ def build_encoder_project_out_block(
 
 
 def build_decoder_project_in_block(
-    block_type: str, in_channels: int, out_channels: int, shortcut: Optional[str], dims: str = "2d"
+    block_type: str,
+    in_channels: int,
+    out_channels: int,
+    shortcut: Optional[str],
+    dims: str = "2d",
+    kernel_size: int | tuple[int, ...] = 3,
 ):
     if block_type == "ConvLayer":
         block = ConvLayer(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=3,
+            kernel_size=kernel_size,
             stride=1,
             use_bias=True,
             norm=None,
@@ -415,6 +438,7 @@ def build_decoder_project_out_block(
     norm: Optional[str],
     act: Optional[str],
     dims: str = "2d",
+    kernel_size: int | tuple[int, ...] = 3,
 ):
     layers: list[nn.Module] = [
         build_norm(norm, in_channels),
@@ -425,7 +449,7 @@ def build_decoder_project_out_block(
             ConvLayer(
                 in_channels=in_channels,
                 out_channels=out_channels,
-                kernel_size=3,
+                kernel_size=kernel_size,
                 stride=1,
                 use_bias=True,
                 norm=None,
@@ -442,6 +466,7 @@ def build_decoder_project_out_block(
                 shortcut=None,
                 dims=dims,
                 factor=factor,
+                kernel_size=kernel_size,
             )
         )
     return OpSequential(layers)
@@ -459,6 +484,12 @@ def _get_factor_for_op(factor_list: Optional[Any], op_idx: int, default: int | t
     return factor_list[op_idx]
 
 
+def _expand_stage_values(value: Any, num_stages: int) -> list[Any]:
+    if isinstance(value, (list, tuple)) and len(value) == num_stages:
+        return list(value)
+    return [value] * num_stages
+
+
 class Encoder(nn.Module):
     def __init__(self, cfg: EncoderConfig):
         super().__init__()
@@ -473,6 +504,7 @@ class Encoder(nn.Module):
         assert isinstance(cfg.norm, str) or (isinstance(cfg.norm, list) and len(cfg.norm) == num_stages)
         downsample_op_idx = 0
         project_in_factor = 1 if cfg.depth_list[0] > 0 else _get_factor_for_op(cfg.downsample_factor_list, downsample_op_idx)
+        stage_kernel_sizes = _expand_stage_values(cfg.kernel_size, num_stages)
 
         self.project_in = build_encoder_project_in_block(
             in_channels=cfg.in_channels,
@@ -480,6 +512,7 @@ class Encoder(nn.Module):
             factor=project_in_factor,
             downsample_block_type=cfg.downsample_block_type,
             dims=cfg.dims,
+            kernel_size=stage_kernel_sizes[0] if cfg.depth_list[0] > 0 else stage_kernel_sizes[1],
         )
         if cfg.depth_list[0] == 0:
             downsample_op_idx += 1
@@ -488,8 +521,15 @@ class Encoder(nn.Module):
         for stage_id, (width, depth) in enumerate(zip(cfg.width_list, cfg.depth_list)):
             block_type = cfg.block_type[stage_id] if isinstance(cfg.block_type, list) else cfg.block_type
             norm = cfg.norm[stage_id] if isinstance(cfg.norm, list) else cfg.norm
+            kernel_size = stage_kernel_sizes[stage_id]
             stage = build_stage_main(
-                width=width, depth=depth, block_type=block_type, norm=norm, act=cfg.act, input_width=width
+                width=width,
+                depth=depth,
+                block_type=block_type,
+                norm=norm,
+                act=cfg.act,
+                input_width=width,
+                kernel_size=kernel_size,
             )
 
             if stage_id < num_stages - 1 and depth > 0:
@@ -501,6 +541,7 @@ class Encoder(nn.Module):
                     shortcut=cfg.downsample_shortcut,
                     dims=cfg.dims,
                     factor=downsample_factor,
+                    kernel_size=kernel_size,
                 )
                 stage.append(downsample_block)
                 downsample_op_idx += 1
@@ -515,6 +556,7 @@ class Encoder(nn.Module):
             act=cfg.out_act,
             shortcut=cfg.out_shortcut,
             dims=cfg.dims,
+            kernel_size=stage_kernel_sizes[-1],
         )
 
     def get_trainable_modules(self) -> nn.Module:
@@ -588,6 +630,7 @@ class Decoder(nn.Module):
         assert isinstance(cfg.act, str) or (isinstance(cfg.act, list) and len(cfg.act) == num_stages)
         upsample_factor_list = cfg.upsample_factor_list
         upsample_op_idx = 0
+        stage_kernel_sizes = _expand_stage_values(cfg.kernel_size, num_stages)
 
         self.project_in = build_decoder_project_in_block(
             block_type=cfg.in_block_type,
@@ -595,6 +638,7 @@ class Decoder(nn.Module):
             out_channels=cfg.width_list[-1],
             shortcut=cfg.in_shortcut,
             dims=cfg.dims,
+            kernel_size=stage_kernel_sizes[-1],
         )
 
         self.stages: list[OpSequential] = []
@@ -609,6 +653,7 @@ class Decoder(nn.Module):
                     shortcut=cfg.upsample_shortcut,
                     dims=cfg.dims,
                     factor=upsample_factor,
+                    kernel_size=stage_kernel_sizes[stage_id + 1],
                 )
                 stage.append(upsample_block)
                 upsample_op_idx += 1
@@ -623,6 +668,7 @@ class Decoder(nn.Module):
                     block_type=block_type,
                     norm=norm,
                     act=act,
+                    kernel_size=stage_kernel_sizes[stage_id],
                     input_width=(
                         width if cfg.upsample_match_channel else cfg.width_list[min(stage_id + 1, num_stages - 1)]
                     ),
@@ -639,6 +685,7 @@ class Decoder(nn.Module):
             norm=cfg.out_norm,
             act=cfg.out_act,
             dims=cfg.dims,
+            kernel_size=stage_kernel_sizes[0],
         )
 
     def forward_single(self, x: torch.Tensor) -> torch.Tensor:
@@ -702,7 +749,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[3,3,3,3,3,3] "
             "decoder.norm=rms2d decoder.act=silu"
         )
-    elif name == "dc-ae-f32c32-in-1.0_3d_deeper":
+    elif name == "dc-ae-f32c32-in-1.0_3d-deeper":
         cfg_str = (
             "dims=3d "
             "in_channels=1 "
@@ -713,11 +760,38 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
             "decoder.norm=rms2d decoder.act=silu"
         )
+    elif name == "dc-ae-f32c32-in-1.0_3d-shallow":
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=32 "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.norm=rms2d decoder.act=silu"
+        )
     elif name == "dc-ae-f32c32-in-1.0_3d-depth-last":
         cfg_str = (
             "dims=3d "
             "in_channels=1 "
             "latent_channels=32 "
+            "encoder.kernel_size=[[1,3,3],[1,3,3],[1,3,3],[1,3,3],[1,3,3],[3,3,3]] "
+            "decoder.kernel_size=[[1,3,3],[1,3,3],[1,3,3],[1,3,3],[1,3,3],[3,3,3]] "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[2,2,2,3,3,3] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[3,3,3,3,3,3] "
+            # "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
+            "decoder.norm=rms2d decoder.act=silu"
+        )
+    elif name == "dc-ae-f32c32-in-1.0_3d-depth-last-isotropic":
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=32 "
+            "encoder.kernel_size=[[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3]] "
+            "decoder.kernel_size=[[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3]] "
             "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[2,2,2,3,3,3] "
             "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
@@ -779,6 +853,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
     cfg: DCAEConfig = OmegaConf.to_object(OmegaConf.merge(OmegaConf.structured(DCAEConfig), cfg))
     if name == "dc-ae-f32c32-in-1.0_3d-depth-last":
         encoder_factors = ((1, 2, 2), (1, 2, 2), (1, 2, 2), (1, 2, 2), (2, 2, 2))
+        # encoder_factors = ((2, 2, 2), (2, 2, 2), (2, 2, 2), (2, 2, 2), (2, 2, 2))
         cfg.encoder.downsample_factor_list = encoder_factors
         cfg.decoder.upsample_factor_list = tuple(reversed(encoder_factors))
     cfg.pretrained_path = pretrained_path

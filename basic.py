@@ -37,8 +37,28 @@ cuda_image = (
 
 volume = modal.Volume.from_name("training_data")
 
+
+def run_and_stream(cmd: list[str], env: dict[str, str]) -> None:
+    print(f"Running: {' '.join(cmd)}", flush=True)
+    process = subprocess.Popen(
+        cmd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line, end="", flush=True)
+
+    return_code = process.wait()
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, cmd)
+
 @app.function(
-    gpu="H100",
+    gpu="L4",
     image=cuda_image,
     secrets=[modal.Secret.from_name("wandb-key")],
     volumes={"/data": volume},
@@ -54,9 +74,22 @@ def run_training():
     env["TORCH_HOME"] = "/data/model_cache"
     env["MONAI_HOME"] = "/data/model_cache"
     env["XDG_CACHE_HOME"] = "/data/model_cache"
+    env["PYTHONUNBUFFERED"] = "1"
+    env["TORCHINDUCTOR_MAX_AUTOTUNE"] = "0"
+    env["TORCHINDUCTOR_MAX_AUTOTUNE_GEMM"] = "0"
 
-    subprocess.run(["python3", "/DC-Gen/structure.py"], check=True, env=env)
-    subprocess.run(["ls", "/data/checkpoints"], check=True)
+    # subprocess.run(["python3", "/DC-Gen/structure.py"], check=True, env=env)
+    run_and_stream([
+        "python3",
+        "-u",
+        "/DC-Gen/config_search_3d.py",
+        "--device", "cuda",
+        "--dtype", "bfloat16",
+        "--memory-mode", "train",
+        "--no-compile",
+        "--csv-path", "config_search_3d_train_bf16.csv"
+    ], env=env)
+    run_and_stream(["ls", "/data/checkpoints"], env=env)
 
 @app.local_entrypoint()
 def main():
