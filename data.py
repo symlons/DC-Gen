@@ -1,10 +1,14 @@
 import os
+from collections import OrderedDict
 from pathlib import Path
+
 import h5py
 import nibabel as nib
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from tqdm import tqdm
+
 
 class HDF5Backend:
     def __init__(self, hdf_path, group_names=["Vol_full"], dims="2d", n_slices=None):
@@ -58,68 +62,136 @@ class HDF5Backend:
 
 
 class NiftiBackend:
-    def __init__(self, nifti_dir=None, csv_metadata=None, dims="2d", n_slices=None, fraction=1.0, seed=42):
+    def __init__(
+        self,
+        nifti_dir=None,
+        csv_metadata=None,
+        dims="2d",
+        n_slices=None,
+        fraction=1.0,
+        seed=42,
+        cache_size=8,
+    ):
+        import json
+        import os
+
         self.nifti_dir = nifti_dir
         self.csv_metadata = csv_metadata
         self.load_volumes = dims == "3d"
         self.n_slices = n_slices
         self.index_map = []
 
+        self.cache_size = cache_size
+        self.cache = OrderedDict()
+
         self.files = self._collect_files(fraction, seed)
+
+        self.cache_path = os.path.expanduser("~/DC-Gen/index_map.json")
+
+        if Path(self.cache_path).exists():
+            with open(self.cache_path, "r") as f:
+                self.index_map = json.load(f)
+            return
+
         self._build_index_map()
+
+        with open(self.cache_path, "w") as f:
+            json.dump(self.index_map, f)
 
     def _collect_files(self, fraction, seed):
         if self.csv_metadata:
             import pandas as pd
+
             df = pd.read_csv(self.csv_metadata)
             files = [str(Path(row["path"])) for _, row in df.iterrows()]
         else:
-            files = list(Path(self.nifti_dir).rglob("*.nii*"))
+            files = [str(p) for p in Path(self.nifti_dir).rglob("*.nii*")]
 
         rng = np.random.default_rng(seed)
         n_select = int(len(files) * fraction)
         return rng.choice(files, n_select, replace=False).tolist()
 
+    def _get_shape_fast(self, file):
+        img = nib.load(file, mmap=True)
+        return img.header.get_data_shape()
+
     def _build_index_map(self):
-        for file in self.files:
-            img = nib.load(file)
-            total_slices = img.shape[2]
+        pbar = tqdm(
+            self.files,
+            desc="Indexing NIfTI",
+            unit="file",
+            dynamic_ncols=True,
+            smoothing=0.05,
+            miniters=1,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        )
+        for file in pbar:
+            pbar.set_postfix_str(Path(file).name[:40])
+            shape = self._get_shape_fast(file)
+            total_slices = shape[2]
+
             start, end = 0, total_slices
             if self.n_slices is not None and self.n_slices < total_slices:
                 start = (total_slices - self.n_slices) // 2
                 end = start + self.n_slices
 
+            file = str(file)
+
             if self.load_volumes:
-                self.index_map.append((file, (start, end), img.shape))
+                self.index_map.append([file, [start, end]])
             else:
                 for s in range(start, end):
-                    self.index_map.append((file, s, img.shape))
+                    self.index_map.append([file, s])
+
+    def _get_cached_img(self, file):
+        if file in self.cache:
+            img = self.cache.pop(file)
+            self.cache[file] = img
+            return img
+
+        img = nib.load(file, mmap=True)
+
+        self.cache[file] = img
+        if len(self.cache) > self.cache_size:
+            self.cache.popitem(last=False)
+
+        return img
 
     def get_volume(self, idx):
         entry = self.index_map[idx]
         file = entry[0]
-        img = nib.load(file)
+
+        img = self._get_cached_img(file)
+        data = img.dataobj
 
         if self.load_volumes:
             start, end = entry[1]
-            vol = img.dataobj[..., start:end]
-            vol = np.asarray(vol).copy()
+            vol = np.asarray(data[..., start:end])
             vol = np.transpose(vol, (2, 0, 1))
             vol = vol[None, ...]
         else:
             s = entry[1]
-            vol = img.dataobj[..., s]
-            vol = np.asarray(vol).copy()
+            vol = np.asarray(data[..., s])
             vol = vol[None, ...]
+
         return torch.from_numpy(vol).float()
 
     def index_map_preview(self):
-        return [(f, s, sh) for f, s, sh in self.index_map]
+        return self.index_map[:10]
 
 
 class CTVolumeDataset(Dataset):
-    def __init__(self, hdf_path=None, nifti_dir=None, csv_metadata=None,
-                 group_names=["Vol_full"], dims="2d", n_slices=None, fraction=1.0, transform=None):
+    def __init__(
+        self,
+        hdf_path=None,
+        nifti_dir=None,
+        csv_metadata=None,
+        group_names=["Vol_full"],
+        dims="2d",
+        n_slices=None,
+        fraction=1.0,
+        transform=None,
+    ):
         self.transform = transform
         self.dims = dims
         self.load_volumes = dims == "3d"
@@ -128,7 +200,9 @@ class CTVolumeDataset(Dataset):
         if hdf_path:
             self.backend = HDF5Backend(hdf_path, group_names, dims, n_slices)
         elif nifti_dir or csv_metadata:
-            self.backend = NiftiBackend(nifti_dir, csv_metadata, dims, n_slices, fraction)
+            self.backend = NiftiBackend(
+                nifti_dir, csv_metadata, dims, n_slices, fraction
+            )
         else:
             raise ValueError("Must provide either hdf_path or nifti_dir/csv_metadata")
 
