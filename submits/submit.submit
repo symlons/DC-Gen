@@ -1,0 +1,60 @@
+#!/bin/bash
+
+#SBATCH --account=cai_ivs
+#SBATCH --partition=gpu_top
+#SBATCH --gres=gpu:h200sxm:1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --time=24:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --job-name=3d_dc_ae
+
+#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/%A/%N.out
+#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/%A/%N.err
+#SBATCH --chdir=/cluster/home/kostfab1/DC-Gen/
+#SBATCH --signal=B:SIGUSR1@90
+#SBATCH --requeue
+#SBATCH --open-mode=append
+
+# --------------------------------------------------------------------------------------
+# Stop signal handler (kept from your original, still useful)
+# --------------------------------------------------------------------------------------
+handle_signal() {
+  echo "STOP SIGNAL DETECTED - REQUEUING JOB"
+
+  if [ -n "$child_pid" ]; then
+    kill -INT "$child_pid"
+    sleep 10
+    if kill -0 "$child_pid" 2>/dev/null; then
+      kill -KILL "$child_pid"
+    fi
+  fi
+
+  scontrol requeue $SLURM_JOB_ID
+  exit 0
+}
+#trap 'handle_signal' USR1
+
+# --------------------------------------------------------------------------------------
+# info
+# --------------------------------------------------------------------------------------
+echo "Running on $(hostname)"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Starting at $(date)"
+
+# --------------------------------------------------------------------------------------
+# modules + env
+# --------------------------------------------------------------------------------------
+#module load python/3.12.3
+#module load uv/0.7.22
+module load cuda/12.9.1
+
+source /cluster/home/kostfab1/dev/bin/activate
+
+# --------------------------------------------------------------------------------------
+# run
+# --------------------------------------------------------------------------------------
+python3 structure.py &
+child_pid=$!
+wait $child_pid

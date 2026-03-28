@@ -1,9 +1,12 @@
 #!/bin/bash
 
 DISKS=(
+  "/scratch/testfile"
   "/tmp/testfile"
-  "/mnt/Volume-eV4BofCN/testfile"
-  "/mnt/SFS-iCxS1nYm/testfile"
+  "/cluster/home/kostfab1/testfile"
+  "/cluster/projects/2025_stmd_VT_diff/testfile"
+  # "/mnt/Volume-eV4BofCN/testfile"
+  # "/mnt/SFS-iCxS1nYm/testfile"
 )
 
 for FILE in "${DISKS[@]}"; do
@@ -18,8 +21,8 @@ for FILE in "${DISKS[@]}"; do
     if [[ "$FSTYPE" =~ nfs|cifs|smb3|sshfs ]]; then
         STORAGE_TYPE="Network ($FSTYPE)"
         # Measure effective network throughput
-        WRITE_SPEED=$(sudo dd if=/dev/zero of="$FILE" bs=1G count=4 oflag=direct 2>&1 | grep -oP '\d+(\.\d+)? [MG]B/s')
-        READ_SPEED=$(sudo dd if="$FILE" of=/dev/null bs=1G iflag=direct 2>&1 | grep -oP '\d+(\.\d+)? [MG]B/s')
+        WRITE_SPEED=$(dd if=/dev/zero of="$FILE" bs=12G count=4 oflag=direct 2>&1 | grep -oP '\d+(\.\d+)? [MG]B/s')
+        READ_SPEED=$(dd if="$FILE" of=/dev/null bs=12G iflag=direct 2>&1 | grep -oP '\d+(\.\d+)? [MG]B/s')
         NETWORK_SPEED="Effective network speed: Write=$WRITE_SPEED, Read=$READ_SPEED"
     else
         # Local disk, check rotational
@@ -36,8 +39,8 @@ for FILE in "${DISKS[@]}"; do
         fi
 
         # Measure read/write speed for local disk
-        WRITE_SPEED=$(sudo dd if=/dev/zero of="$FILE" bs=1G count=4 oflag=direct 2>&1 | grep -oP '\d+(\.\d+)? [MG]B/s')
-        READ_SPEED=$(sudo dd if="$FILE" of=/dev/null bs=1G iflag=direct 2>&1 | grep -oP '\d+(\.\d+)? [MG]B/s')
+        WRITE_SPEED=$(dd if=/dev/zero of="$FILE" bs=12G count=4 oflag=direct 2>&1 | grep -oP '\d+(\.\d+)? [MG]B/s')
+        READ_SPEED=$(dd if="$FILE" of=/dev/null bs=12G iflag=direct 2>&1 | grep -oP '\d+(\.\d+)? [MG]B/s')
     fi
 
     echo "  Storage type: $STORAGE_TYPE"
@@ -49,4 +52,3 @@ for FILE in "${DISKS[@]}"; do
 
     rm -f "$FILE"
 done
-

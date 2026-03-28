@@ -1,23 +1,30 @@
 import argparse
-from collections import deque
 import os
+import re
+from collections import deque
 
 import torch
+import wandb
+from monai.losses import PerceptualLoss
+from monai.transforms import (
+    CenterSpatialCrop,
+    Compose,
+    Resize,
+    ScaleIntensity,
+    ScaleIntensityRange,
+    SpatialPad,
+)
 from torch.utils.data import DataLoader, DistributedSampler
 
-from monai.transforms import Compose, Resize, ScaleIntensity, ScaleIntensityRange
-from monai.losses import PerceptualLoss
-
-from registry import dataset_registry, loss_registry
-from dc_gen.ae_model_zoo import DCAE_HF
-from checkpointing import load_checkpoint, save_checkpoint
-from evaluation import evaluate
-from config import load_config
-from multigpu import main_process_only, init_distributed, cleanup
-from viz import Visualize
 from basics import get_autocast_ctx, resolve_autocast_dtype
-import wandb
-import re
+from checkpointing import load_checkpoint, save_checkpoint
+from config import load_config
+from dc_gen.ae_model_zoo import DCAE_HF
+from evaluation import evaluate
+from multigpu import cleanup, init_distributed, main_process_only
+from registry import dataset_registry, loss_registry
+from viz import Visualize
+
 
 def configure_trainable_params(model, trainable_ae_params):
     if trainable_ae_params is None:
@@ -60,6 +67,7 @@ def configure_trainable_params(model, trainable_ae_params):
 
     return groups
 
+
 class ClampIntensity:
     def __init__(self, min_value: float, max_value: float):
         self.min_value = min_value
@@ -67,7 +75,9 @@ class ClampIntensity:
         self._pending_ranges: list[tuple[float, float]] = []
 
     def __call__(self, tensor):
-        self._pending_ranges.append((float(tensor.min().item()), float(tensor.max().item())))
+        self._pending_ranges.append(
+            (float(tensor.min().item()), float(tensor.max().item()))
+        )
         return torch.clamp(tensor, min=self.min_value, max=self.max_value)
 
     def pop_batch_ranges(self, batch_size: int) -> dict[str, object] | None:
@@ -109,7 +119,9 @@ def print_config_summary(cfg, device):
     print(f"  Num Workers  : {cfg.training.num_workers}")
     print(f"  DType        : {cfg.training.dtype}")
     print(f"  Autocast     : {cfg.training.use_autocast}")
-    print(f"  AMP DType    : {cfg.training.autocast_dtype} -> {resolved_autocast_dtype}")
+    print(
+        f"  AMP DType    : {cfg.training.autocast_dtype} -> {resolved_autocast_dtype}"
+    )
     print(f"  LR           : {cfg.hparams.learning_rate}")
     print(f"  Weight Decay : {cfg.hparams.weight_decay}")
     print(f"  Loss         : {cfg.objective.loss_fn}")
@@ -119,6 +131,7 @@ def print_config_summary(cfg, device):
     print(f"  Viz Every    : {cfg.logging.viz_every}")
     print(f"  Validate Every: {cfg.logging.validate_every}")
     print()
+
 
 def print_param_group_modules(model, param_groups):
     named_params = dict(model.named_parameters())
@@ -175,9 +188,13 @@ def print_param_group_modules(model, param_groups):
             except KeyError:
                 print(f"[WARNING] Module not found: {key}")
 
+
 def tensor_stats_dict(name: str, tensor: torch.Tensor) -> dict[str, float]:
     tensor = tensor.detach().float()
-    quantiles = torch.quantile(tensor.flatten(), torch.tensor([0.01, 0.05, 0.5, 0.95, 0.99], device=tensor.device))
+    quantiles = torch.quantile(
+        tensor.flatten(),
+        torch.tensor([0.01, 0.05, 0.5, 0.95, 0.99], device=tensor.device),
+    )
     return {
         f"{name}/mean": tensor.mean().item(),
         f"{name}/std": tensor.std(unbiased=False).item(),
@@ -191,7 +208,9 @@ def tensor_stats_dict(name: str, tensor: torch.Tensor) -> dict[str, float]:
     }
 
 
-def finite_difference_loss(recon: torch.Tensor, target: torch.Tensor, dims: tuple[int, ...]) -> torch.Tensor:
+def finite_difference_loss(
+    recon: torch.Tensor, target: torch.Tensor, dims: tuple[int, ...]
+) -> torch.Tensor:
     losses = []
     for dim in dims:
         recon_diff = torch.diff(recon, dim=dim)
@@ -226,17 +245,30 @@ def build_pipeline(cfg):
 
     if cfg.dims == "2d":
         spatial_size = tuple(cfg.pipeline.resize_hw)
+        transforms.append(Resize(spatial_size=spatial_size))
     else:
-        resize_depth = cfg.pipeline.resize_depth if cfg.pipeline.resize_depth is not None else cfg.pipeline.n_slices
-        spatial_size = (resize_depth, *cfg.pipeline.resize_hw)
+        n_slices = cfg.pipeline.n_slices
 
-    transforms.append(Resize(spatial_size=spatial_size))
+        transforms.append(SpatialPad(spatial_size=(n_slices, -1, -1), value=-1000))
+        transforms.append(CenterSpatialCrop(roi_size=(n_slices, -1, -1)))
+
+        spatial_size = (-1, *cfg.pipeline.resize_hw)
+        transforms.append(Resize(spatial_size=spatial_size))
+
     return Compose(transforms), clip_transform
+
 
 def main_worker(rank: int, world_size: int, cfg):
     use_cuda = torch.cuda.is_available()
-    device = torch.device("mps" if torch.backends.mps.is_available() and not use_cuda else f"cuda:{rank}" if use_cuda else "cpu")
-    if use_cuda and world_size > 1: init_distributed(rank, world_size)
+    device = torch.device(
+        "mps"
+        if torch.backends.mps.is_available() and not use_cuda
+        else f"cuda:{rank}"
+        if use_cuda
+        else "cpu"
+    )
+    if use_cuda and world_size > 1:
+        init_distributed(rank, world_size)
 
     pipeline, clip_transform = build_pipeline(cfg)
     dataset_cls = dataset_registry[cfg.dataset.name]
@@ -245,7 +277,7 @@ def main_worker(rank: int, world_size: int, cfg):
         group_names=cfg.dataset.group_names,
         dims=cfg.dims,
         n_slices=cfg.pipeline.n_slices,
-        transform=pipeline
+        transform=pipeline,
     )
 
     val_dataset = dataset_cls(
@@ -253,11 +285,18 @@ def main_worker(rank: int, world_size: int, cfg):
         group_names=cfg.dataset.group_names,
         dims=cfg.dims,
         n_slices=cfg.pipeline.n_slices,
-        transform=pipeline
+        transform=pipeline,
     )
 
-    if use_cuda and world_size > 1: sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=cfg.training.shuffle_data)
-    else: sampler = None
+    if use_cuda and world_size > 1:
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=cfg.training.shuffle_data,
+        )
+    else:
+        sampler = None
 
     loader = DataLoader(
         dataset,
@@ -266,7 +305,7 @@ def main_worker(rank: int, world_size: int, cfg):
         pin_memory=cfg.training.pin_memory,
         num_workers=cfg.training.num_workers,
         prefetch_factor=cfg.training.prefetch_factor,
-        sampler=sampler
+        sampler=sampler,
     )
 
     val_loader = DataLoader(
@@ -280,13 +319,15 @@ def main_worker(rank: int, world_size: int, cfg):
 
     dtype = getattr(torch, cfg.training.dtype)
     model = DCAE_HF(model_name=cfg.model.name).to(dtype=dtype, device=device)
-    trainable_ae_params = [ ["encoder.project_out.*", "decoder.project_in.*"] ]
-    # trainable_ae_params = None
+    # trainable_ae_params = [["encoder.project_out.*", "decoder.project_in.*"]]
+    trainable_ae_params = None
     param_groups = configure_trainable_params(model, trainable_ae_params)
     print_param_group_modules(model, param_groups)
 
-    if getattr(cfg.model, "compile", False): model = torch.compile(model)
-    if use_cuda and world_size > 1: model = wrap_ddp(model, device, rank, world_size)
+    if getattr(cfg.model, "compile", False):
+        model = torch.compile(model)
+    if use_cuda and world_size > 1:
+        model = wrap_ddp(model, device, rank, world_size)
     model.train()
 
     perceptual_loss_fn = None
@@ -299,39 +340,53 @@ def main_worker(rank: int, world_size: int, cfg):
     perceptual_weight = cfg.objective.perceptual_weight
     detail_weight = cfg.objective.detail_weight
 
+    os.makedirs(cfg.paths.save_dir, exist_ok=True)
     viz = Visualize(viz_type=cfg.dims)
-    optimizer = torch.optim.AdamW(param_groups, lr=cfg.hparams.learning_rate, weight_decay=cfg.hparams.weight_decay)
+    optimizer = torch.optim.AdamW(
+        param_groups,
+        lr=cfg.hparams.learning_rate,
+        weight_decay=cfg.hparams.weight_decay,
+    )
     global_step = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device)
 
     loss_history, psnr_history, ssim_history = [], [], []
     checkpoint_queue = deque()
-    os.makedirs(cfg.paths.save_dir, exist_ok=True)
     log_file = os.path.join(cfg.paths.save_dir, "training_log.txt")
     num_epochs = cfg.training.num_epochs
     log_metrics = cfg.logging.wandb
-    if log_metrics: wandb.init(project="ct_retcon", config=vars(cfg))
+    if log_metrics:
+        wandb.init(project="ct_retcon", config=vars(cfg))
     print_config_summary(cfg, device)
     print(model)
 
     for epoch in range(num_epochs):
-        if sampler: sampler.set_epoch(epoch)
+        if sampler:
+            sampler.set_epoch(epoch)
 
         if rank == 0:
             print(f"epoch: {epoch} out of {num_epochs}")
             print(f"dataset size: {len(dataset)}")
 
         for i, batch in enumerate(loader):
-            if i == 0: print(f"  batch shape: {batch.shape}")
-            save_diff = cfg.logging.save_volumes and global_step % cfg.logging.viz_every == 0
+            if i == 0:
+                print(f"  batch shape: {batch.shape}")
+            save_diff = (
+                cfg.logging.save_volumes and global_step % cfg.logging.viz_every == 0
+            )
             save_ckpt = global_step % cfg.training.checkpoint_every == 0
-            do_validation = cfg.logging.validate_every is not None and global_step % cfg.logging.validate_every == 0
+            do_validation = (
+                cfg.logging.validate_every is not None
+                and global_step > 0
+                and global_step % cfg.logging.validate_every == 0
+            )
             raw_batch_range = None
             if clip_transform is not None:
                 raw_batch_range = clip_transform.pop_batch_ranges(len(batch))
 
             batch = batch.to(dtype=dtype, device=device, non_blocking=True)
 
-            with get_autocast_ctx(cfg, device): recon = model.decoder(model.encoder(batch))
+            with get_autocast_ctx(cfg, device):
+                recon = model.decoder(model.encoder(batch))
 
             recon_loss = loss_registry[cfg.objective.loss_fn](recon, batch)
             if perceptual_loss_fn is not None:
@@ -341,14 +396,22 @@ def main_worker(rank: int, world_size: int, cfg):
 
             detail_dims = (-2, -1)
             detail_loss = finite_difference_loss(recon.float(), batch.float(), dims=detail_dims)
-            loss = recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss
+            loss = (recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss)
             # --- Metircs
             with main_process_only():
                 with torch.no_grad():
-                    loss_value, psnr_value, ssim_value, slice_psnr_value, slice_ssim_value = evaluate(
-                        recon.detach(), batch.detach(), loss.detach()
-                    )
-                for h, v in zip([loss_history, psnr_history, ssim_history], [loss_value, psnr_value, ssim_value]): h.append(v)
+                    (
+                        loss_value,
+                        psnr_value,
+                        ssim_value,
+                        slice_psnr_value,
+                        slice_ssim_value,
+                    ) = evaluate(recon.detach(), batch.detach(), loss.detach())
+                for h, v in zip(
+                    [loss_history, psnr_history, ssim_history],
+                    [loss_value, psnr_value, ssim_value],
+                ):
+                    h.append(v)
 
                 try:
                     with open(log_file, "a") as f:
@@ -370,14 +433,18 @@ def main_worker(rank: int, world_size: int, cfg):
                     )
                     sample_text = ", ".join(
                         f"s{i}: [{sample_min:.3f}, {sample_max:.3f}]"
-                        for i, (sample_min, sample_max) in enumerate(raw_batch_range["sample_ranges"])
+                        for i, (sample_min, sample_max) in enumerate(
+                            raw_batch_range["sample_ranges"]
+                        )
                     )
                     wandb_range_text = (
                         f"step {global_step}: raw batch range before clip/normalize "
                         f"[{raw_batch_range['batch_min']:.3f}, {raw_batch_range['batch_max']:.3f}]"
                     )
                     if sample_text:
-                        wandb_range_text = f"{wandb_range_text}; per-sample {sample_text}"
+                        wandb_range_text = (
+                            f"{wandb_range_text}; per-sample {sample_text}"
+                        )
 
                 print(
                     f"Iter {global_step}: loss={loss.item():.6f}, "
@@ -385,7 +452,8 @@ def main_worker(rank: int, world_size: int, cfg):
                     f"slice_PSNR={slice_psnr_value:.6f}, slice_SSIM={slice_ssim_value:.6f}"
                     f"{range_text}"
                 )
-                if save_diff: viz.save(batch, recon, cfg.paths.save_dir, global_step)
+                if save_diff:
+                    viz.save(batch, recon, cfg.paths.save_dir, global_step)
                 if log_metrics:
                     wandb_metrics = {
                         "loss/total": loss.item(),
@@ -404,7 +472,13 @@ def main_worker(rank: int, world_size: int, cfg):
                         wandb.run.summary["raw_input_range_text"] = wandb_range_text
                 if do_validation:
                     print("Running validation...")
-                    val_losses, val_psnrs, val_ssims, val_slice_psnrs, val_slice_ssims = [], [], [], [], []
+                    (
+                        val_losses,
+                        val_psnrs,
+                        val_ssims,
+                        val_slice_psnrs,
+                        val_slice_ssims,
+                    ) = [], [], [], [], []
                     total = len(val_loader)
 
                     with torch.inference_mode():
@@ -412,8 +486,8 @@ def main_worker(rank: int, world_size: int, cfg):
                         for i, batch in enumerate(val_loader):
                             batch = batch.to(dtype=dtype, device=device, non_blocking=True)
 
-                            with get_autocast_ctx(cfg, device): recon = model.decoder(model.encoder(batch))
-
+                            with get_autocast_ctx(cfg, device):
+                                recon = model.decoder(model.encoder(batch))
                             loss_value, psnr_value, ssim_value, slice_psnr_value, slice_ssim_value = evaluate(recon, batch, loss)
 
                             val_losses.append(loss_value)
@@ -422,7 +496,7 @@ def main_worker(rank: int, world_size: int, cfg):
                             val_slice_psnrs.append(slice_psnr_value)
                             val_slice_ssims.append(slice_ssim_value)
 
-                            print(f"\rValidation [{i+1}/{total}]", end="")
+                            print(f"\rValidation [{i + 1}/{total}]", end="")
                     print()
 
                     val_loss = torch.tensor(val_losses).mean().item()
@@ -431,27 +505,49 @@ def main_worker(rank: int, world_size: int, cfg):
                     val_slice_psnr = torch.tensor(val_slice_psnrs).mean().item()
                     val_slice_ssim = torch.tensor(val_slice_ssims).mean().item()
 
-                    print(f"Validation Loss: {val_loss:.6f}, PSNR: {val_psnr:.6f}, SSIM: {val_ssim:.6f}, Slice PSNR: {val_slice_psnr:.6f}, Slice SSIM: {val_slice_ssim:.6f}")
-                    
-                    if log_metrics:
-                        wandb.log({
-                            "val_loss/total": val_loss,
-                            "val_metrics/psnr": val_psnr,
-                            "val_metrics/ssim": val_ssim,
-                            "val_metrics/slice_psnr": val_slice_psnr,
-                            "val_metrics/slice_ssim": val_slice_ssim,
-                            }, step=global_step)
-                if save_ckpt: save_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, global_step, checkpoint_queue, cfg.training.max_checkpoints)
+                    print(
+                        f"Validation Loss: {val_loss:.6f}, PSNR: {val_psnr:.6f}, SSIM: {val_ssim:.6f}, Slice PSNR: {val_slice_psnr:.6f}, Slice SSIM: {val_slice_ssim:.6f}"
+                    )
 
-            optimizer.zero_grad(); loss.backward(); optimizer.step()
+                    if log_metrics:
+                        wandb.log(
+                            {
+                                "val_loss/total": val_loss,
+                                "val_metrics/psnr": val_psnr,
+                                "val_metrics/ssim": val_ssim,
+                                "val_metrics/slice_psnr": val_slice_psnr,
+                                "val_metrics/slice_ssim": val_slice_ssim,
+                            },
+                            step=global_step,
+                        )
+                if save_ckpt:
+                    save_checkpoint(
+                        cfg,
+                        model,
+                        optimizer,
+                        cfg.paths.checkpoint_dir,
+                        global_step,
+                        checkpoint_queue,
+                        cfg.training.max_checkpoints,
+                    )
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
             global_step += 1
 
     if use_cuda and world_size > 1:
         cleanup()
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default=None, help="Path to YAML config file to override defaults")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to YAML config file to override defaults",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -461,6 +557,7 @@ if __name__ == "__main__":
 
     if use_cuda and world_size > 1:
         import torch.multiprocessing as mp
+
         mp.spawn(main_worker, args=(world_size, cfg), nprocs=world_size, join=True)
     else:
         main_worker(0, 1, cfg)

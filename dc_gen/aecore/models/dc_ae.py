@@ -802,6 +802,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
     elif name in ["dc-ae-f32c32-in-1.0", "dc-ae-f32c32-in-1.0_2d", "dc-ae-f32c32-in-1.0-256px", "dc-ae-f32c32-mix-1.0"]:
         cfg_str = (
             "latent_channels=32 "
+             "in_channels=1 "
             "encoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[0,4,8,2,2,2] "
             "decoder.block_type=[ResBlock,ResBlock,ResBlock,ResBlock,ResBlock,ResBlock] "

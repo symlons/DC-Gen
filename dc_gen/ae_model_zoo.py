@@ -41,6 +41,7 @@ REGISTERED_DCAE_MODEL: dict[str, tuple[Callable, Optional[str], Optional[str]]] 
     "dc-ae-f32c32-in-1.0_2d": (dc_ae_f32c32, None, "mit-han-lab"),
     "dc-ae-f32c32-in-1.0_3d": (dc_ae_f32c32, None, "mit-han-lab"),
     "dc-ae-f32c32-in-1.0_3d-depth-last": (dc_ae_f32c32, None, "mit-han-lab"),
+    "dc-ae-f32c32-in-1.0_3d-shallow": (dc_ae_f32c32, None, "mit-han-lab"),
     "dc-ae-f64c128-in-1.0": (dc_ae_f64c128, None, "mit-han-lab"),
     "dc-ae-f128c512-in-1.0": (dc_ae_f128c512, None, "mit-han-lab"),
     #################################################################################################

@@ -29,7 +29,7 @@ dependencies = [
     "h5py",
     "matplotlib",
     "monai",
-    "lpips"
+    "lpips",
 ]
 
 [tool.black]
