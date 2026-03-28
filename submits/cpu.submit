@@ -18,7 +18,8 @@ echo "CPUs:       $SLURM_CPUS_PER_TASK"
 echo "Started:    $(date)"
 echo "=========================================="
 
-# ── Paths ──────────────────────────────────────────────────────────────────
+source /cluster/home/kostfab1/dev/bin/activate
+
 DATA_SRC="/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train"
 SCRATCH="/scratch/$SLURM_JOB_ID"
 OUT_H5="/cluster/projects/2025_stmd_VT_diff/data/ct_dataset_256.h5"
@@ -26,30 +27,23 @@ LOG_DIR="/cluster/projects/2025_stmd_VT_diff/logs"
 
 mkdir -p "$SCRATCH" "$LOG_DIR" "$(dirname $OUT_H5)"
 
-# ── Step 1: Copy data to local scratch ────────────────────────────────────
 echo "[$(date +%T)] Copying data to local scratch..."
 rsync -a --info=progress2 "$DATA_SRC/" "$SCRATCH/data/"
 echo "[$(date +%T)] Copy done. $(find $SCRATCH/data -name '*.nii.gz' | wc -l) files."
 
-# ── Step 2: Pre-decompress .nii.gz → .nii ─────────────────────────────────
 echo "[$(date +%T)] Pre-decompressing .nii.gz files..."
 find "$SCRATCH/data" -name "*.nii.gz" | \
     xargs -P 56 -I{} bash -c 'gunzip -k "$1" 2>/dev/null || true' _ {}
 echo "[$(date +%T)] Decompressed $(find $SCRATCH/data -name '*.nii' | wc -l) files."
 
-# ── Step 3: Run conversion ─────────────────────────────────────────────────
 echo "[$(date +%T)] Starting HDF5 conversion..."
 python3 /cluster/projects/2025_stmd_VT_diff/scripts/create_hdf.py \
-    --root    "$SCRATCH/data" \
-    --out     "$SCRATCH/ct_dataset_256.h5" \
-    --workers 56 \
-    --ext     ".nii"
+    --root "$SCRATCH/data" \
+    --out "$SCRATCH/ct_dataset_256.h5"
 
-# ── Step 4: Move output to final destination ───────────────────────────────
 echo "[$(date +%T)] Moving HDF5 to final location..."
 mv "$SCRATCH/ct_dataset_256.h5" "$OUT_H5"
 
-# ── Cleanup ────────────────────────────────────────────────────────────────
 echo "[$(date +%T)] Cleaning scratch..."
 rm -rf "$SCRATCH"
 

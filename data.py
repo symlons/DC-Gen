@@ -85,8 +85,10 @@ class NiftiBackend:
         self.cache = OrderedDict()
 
         self.files = self._collect_files(fraction, seed)
+        self.seed = seed
 
-        self.cache_path = os.path.expanduser("~/DC-Gen/index_map.json")
+        mode = "3d" if self.load_volumes else "2d"
+        self.cache_path = os.path.expanduser(f"~/DC-Gen/index_map_{mode}.json")
 
         if Path(self.cache_path).exists():
             with open(self.cache_path, "r") as f:
@@ -116,6 +118,8 @@ class NiftiBackend:
         return img.header.get_data_shape()
 
     def _build_index_map(self):
+        rng = np.random.default_rng(self.seed)
+
         pbar = tqdm(
             self.files,
             desc="Indexing NIfTI",
@@ -125,6 +129,7 @@ class NiftiBackend:
             miniters=1,
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         )
+
         for file in pbar:
             pbar.set_postfix_str(Path(file).name[:40])
             shape = self._get_shape_fast(file)
@@ -140,8 +145,12 @@ class NiftiBackend:
             if self.load_volumes:
                 self.index_map.append([file, [start, end]])
             else:
-                for s in range(start, end):
-                    self.index_map.append([file, s])
+                available = np.arange(start, end)
+                num_samples = min(32, len(available))
+                sampled = rng.choice(available, size=num_samples, replace=False)
+
+                for s in sampled:
+                    self.index_map.append([file, int(s)])
 
     def _get_cached_img(self, file):
         if file in self.cache:
@@ -162,19 +171,22 @@ class NiftiBackend:
         file = entry[0]
 
         img = self._get_cached_img(file)
-        data = img.dataobj
+        data = np.asarray(img.dataobj)
 
         if self.load_volumes:
             start, end = entry[1]
-            vol = np.asarray(data[..., start:end])
+            end = min(end, data.shape[2])
+            vol = data[..., start:end]
             vol = np.transpose(vol, (2, 0, 1))
             vol = vol[None, ...]
         else:
             s = entry[1]
-            vol = np.asarray(data[..., s])
+            s = min(int(s), data.shape[2] - 1)
+
+            vol = data[..., s]
             vol = vol[None, ...]
 
-        return torch.from_numpy(vol).float()
+        return torch.from_numpy(vol.copy()).float()
 
     def index_map_preview(self):
         return self.index_map[:10]

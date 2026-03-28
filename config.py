@@ -28,15 +28,15 @@ class DatasetConfig:
 @dataclass
 class PathsConfig:
     hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
-    checkpoint_dir: str = "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v02"
-    save_dir: str = "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v02"
+    checkpoint_dir: str = "/cluster/home/kostfab1/DC-GEN/checkpoints/dc_ae_3d_v04_shallow"
+    save_dir: str = "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow"
     nifti_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
     nifti_val_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
 
 
 @dataclass
 class PipelineConfig:
-    resize_hw: List[int] = field(default_factory=lambda: [128, 128])
+    resize_hw: List[int] = field(default_factory=lambda: [256, 256])
     n_slices: Optional[int] = 32
     resize_depth: Optional[int] = None
     clip_input_range: Optional[List[float]] = field(default_factory=lambda: [-1000.0, 1000.0])
@@ -60,7 +60,7 @@ class ObjectiveConfig:
 @dataclass
 class TrainingConfig:
     num_epochs: int = 350
-    batch_size: int = 8
+    batch_size: int = 4
     shuffle_data: bool = True
     num_workers: int = 32
     pin_memory: bool = True
@@ -68,7 +68,7 @@ class TrainingConfig:
     device: str = ("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
     dtype: str = "float32"
     autocast_dtype: str = "auto"
-    resume_from_checkpoint: bool = False
+    resume_from_checkpoint: bool = True
     checkpoint_every: int = 1000
     max_checkpoints: int = 4
     use_autocast: bool = True
@@ -82,7 +82,7 @@ class HParamsConfig:
 
 @dataclass
 class ModelConfig:
-    name: str = "dc-ae-f32c32-in-1.0_3d-depth-last"
+    name: str = "dc-ae-f32c32-in-1.0_3d-shallow"
     compile: bool = True
 
 

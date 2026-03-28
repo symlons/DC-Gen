@@ -14,6 +14,23 @@ from typing import cast
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
+class PatchEmbed3D(nn.Module):
+    def __init__(self, input_size, patch_size, in_channels, embed_dim):
+        super().__init__()
+        self.patch_size = (patch_size, patch_size, patch_size)
+
+        self.proj = nn.Conv3d(
+            in_channels,
+            embed_dim,
+            kernel_size=self.patch_size,
+            stride=self.patch_size
+        )
+
+    def forward(self, x):
+        x = self.proj(x)
+        B, C, D, H, W = x.shape
+        x = x.flatten(2).transpose(1, 2)
+        return x, (D, H, W)
 
 class TimestepEmbedder(nn.Module):
     def __init__(self, hidden_size, frequency_embedding_size=256):
@@ -122,7 +139,8 @@ class DiT(nn.Module):
         self.patch_size = patch_size
         self.num_heads = num_heads
 
-        self.x_embedder: PatchEmbed = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
+        # self.x_embedder: PatchEmbed = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
+        self.x_embedder = PatchEmbed3D(input_size, patch_size, in_channels, hidden_size)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
         num_patches = self.x_embedder.num_patches
@@ -167,16 +185,31 @@ class DiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
-    def unpatchify(self, x):
-        c = self.out_channels
-        p = self.x_embedder.patch_size[0]
-        h = w = int(x.shape[1] ** 0.5)
-        assert h * w == x.shape[1]
+    # def unpatchify(self, x):
+    #     c = self.out_channels
+    #     p = self.x_embedder.patch_size[0]
+    #     h = w = int(x.shape[1] ** 0.5)
+    #     assert h * w == x.shape[1]
 
-        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
-        x = torch.einsum("nhwpqc->nchpwq", x)
-        imgs = x.reshape((x.shape[0], int(c), int(h) * int(p), int(h) * int(p)))
-        return imgs
+    #     x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
+    #     x = torch.einsum("nhwpqc->nchpwq", x)
+    #     imgs = x.reshape((x.shape[0], int(c), int(h) * int(p), int(h) * int(p)))
+    #     return imgs
+
+    def unpatchify(self, x, spatial_shape):
+        c = self.out_channels
+        p = self.patch_size
+
+        D, H, W = spatial_shape
+
+        d = D
+        h = H
+        w = W
+
+        x = x.reshape(x.shape[0], d, h, w, p, p, p, c)
+        x = x.permute(0, 7, 1, 4, 2, 5, 3, 6)
+        x = x.reshape(x.shape[0], c, d * p, h * p, w * p)
+        return x
 
     def forward(self, x, t, y):
         x = self.x_embedder(x) + self.pos_embed
@@ -256,4 +289,9 @@ def DiT_S_8(**kwargs):
 def DiT_L_1(**kwargs):
     return DiT(depth=24, hidden_size=1024, patch_size=1, num_heads=16, **kwargs)
 
-DiT_models = { "DiT-XL/2": DiT_XL_2, "DiT-S/2": DiT_S_2, "DiT-S/8": DiT_L_1, "DiT_L_2" }
+DiT_models = {
+    "DiT-XL/2": DiT_XL_2,
+    "DiT-S/2": DiT_S_2,
+    "DiT-S/8": DiT_S_8,
+    "DiT-L/1": DiT_L_1,
+}
