@@ -230,6 +230,7 @@ def print_config_summary(cfg, device):
     print(f"  Epochs       : {cfg.training.num_epochs}")
     print(f"  Batch Size   : {cfg.training.batch_size}")
     print(f"  Num Workers  : {cfg.training.num_workers}")
+    print(f"  Persistent Workers: {cfg.training.persistent_workers}")
     print(f"  DType        : {cfg.training.dtype}")
     print(f"  Autocast     : {cfg.training.use_autocast}")
     print(
@@ -434,7 +435,7 @@ def main_worker(rank: int, world_size: int, cfg):
         num_workers=num_workers,
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=sampler,
-        persistent_workers=num_workers > 0,
+        persistent_workers=num_workers > 0 and cfg.training.persistent_workers,
     )
 
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False) if use_cuda and world_size > 1 else None
@@ -447,7 +448,7 @@ def main_worker(rank: int, world_size: int, cfg):
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=val_sampler,
         collate_fn=collate_fn_skip_none,
-        persistent_workers=num_workers > 0,
+        persistent_workers=num_workers > 0 and cfg.training.persistent_workers,
     )
 
     rank0_print("[setup] Loading model...")
@@ -653,8 +654,6 @@ def main_worker(rank: int, world_size: int, cfg):
                     f"slice_PSNR={slice_psnr_value:.6f}, slice_SSIM={slice_ssim_value:.6f}"
                     f"{range_text}"
                 )
-                if save_diff:
-                    viz.save(batch, recon, cfg.paths.save_dir, global_step)
                 if log_metrics:
                      wandb_metrics = {
                          "loss/total": loss.item(),
@@ -672,6 +671,12 @@ def main_worker(rank: int, world_size: int, cfg):
                      wandb.log(wandb_metrics, step=global_step)
                      if wandb.run is not None and wandb_range_text is not None:
                          wandb.run.summary["raw_input_range_text"] = wandb_range_text
+
+            if save_diff:
+                barrier()
+                if is_main_process():
+                    viz.save(batch, recon, cfg.paths.save_dir, global_step)
+                barrier()
 
             # --- Validation (all ranks must participate for aggregate_metrics)
             if do_validation:
@@ -738,16 +743,19 @@ def main_worker(rank: int, world_size: int, cfg):
                rank0_print(f"[val] Validation complete at step {global_step}")
 
             # --- Checkpointing (rank 0 only, no DDP-sync ops)
-            if save_ckpt and is_main_process():
-                save_checkpoint(
-                    cfg,
-                    model,
-                    optimizer,
-                    cfg.paths.checkpoint_dir,
-                    global_step,
-                    checkpoint_queue,
-                    cfg.training.max_checkpoints,
-                )
+            if save_ckpt:
+                barrier()
+                if is_main_process():
+                    save_checkpoint(
+                        cfg,
+                        model,
+                        optimizer,
+                        cfg.paths.checkpoint_dir,
+                        global_step,
+                        checkpoint_queue,
+                        cfg.training.max_checkpoints,
+                    )
+                barrier()
 
             global_step += 1
 

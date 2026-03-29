@@ -54,6 +54,7 @@ class TrainingConfig:
     batch_size: int = 4
     shuffle_data: bool = True
     num_workers: int = 32
+    persistent_workers: bool = True
     pin_memory: bool = True
     prefetch_factor: Optional[int] = None
     device: str = ("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
