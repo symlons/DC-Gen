@@ -13,12 +13,13 @@ training:
   num_epochs: 2
   num_workers: 32
   checkpoint_every: 30
+  resume_from_checkpoint: False
 
 hparams:
   learning_rate: 2e-5
 
 logging:
-  wandb: False
+  wandb: True
   save_volumes: False
   viz_every: 10
   validate_every: 1000000

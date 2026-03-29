@@ -1,7 +1,11 @@
 import argparse
+import io
+import logging
 import os
 import re
 import signal
+import subprocess
+import sys
 from collections import deque
 
 import torch
@@ -31,6 +35,86 @@ from viz import Visualize
 
 # Global flag for graceful shutdown
 _shutdown_requested = False
+
+
+def get_git_info():
+    """Get git commit hash, status, and diff."""
+    git_info = {}
+    try:
+        # Get commit hash
+        commit_hash = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True
+        ).strip()
+        git_info["git_commit_hash"] = commit_hash
+        
+        # Get git status
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain"], text=True
+        ).strip()
+        git_info["git_status"] = status if status else "clean"
+        
+        # Get git diff
+        diff = subprocess.check_output(
+            ["git", "diff", "HEAD"], text=True
+        ).strip()
+        git_info["git_diff"] = diff if diff else "no changes"
+        
+        # Get branch name
+        branch = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
+        ).strip()
+        git_info["git_branch"] = branch
+    except Exception as e:
+        git_info["git_error"] = str(e)
+    
+    return git_info
+
+
+class WandBPrintCapture:
+    """Captures print statements and logs them to wandb."""
+    def __init__(self, log_metrics=False):
+        self.log_metrics = log_metrics
+        self.buffer = []
+        self.original_stdout = sys.stdout
+        self.current_epoch = 0
+        self.current_step = 0
+        
+    def set_epoch(self, epoch):
+        """Update current epoch."""
+        self.current_epoch = epoch
+    
+    def set_step(self, step):
+        """Update current step."""
+        self.current_step = step
+        
+    def write(self, message):
+        self.original_stdout.write(message)
+        if message.strip() and self.log_metrics:
+            self.buffer.append(message.strip())
+            # Log to wandb in batches
+            if len(self.buffer) >= 10:
+                self.flush_to_wandb()
+    
+    def flush(self):
+        self.original_stdout.flush()
+        if self.buffer and self.log_metrics:
+            self.flush_to_wandb()
+    
+    def flush_to_wandb(self):
+        if self.buffer and wandb.run is not None:
+            log_text = "\n".join(self.buffer)
+            try:
+                # Log with epoch info, don't pass step to avoid conflicts
+                wandb.log({
+                    "logs/print": wandb.Html(f"<pre>{log_text}</pre>"),
+                    "epoch": self.current_epoch,
+                }, commit=False)
+            except Exception:
+                pass
+            self.buffer = []
+    
+    def isatty(self):
+        return self.original_stdout.isatty()
 
 def _shutdown_handler(signum, frame):
     global _shutdown_requested
@@ -372,8 +456,32 @@ def main_worker(rank: int, world_size: int, cfg):
     log_file = os.path.join(cfg.paths.save_dir, "training_log.txt")
     num_epochs = cfg.training.num_epochs
     log_metrics = cfg.logging.wandb
+    
     if log_metrics:
-        wandb.init(project="ct_retcon", config=vars(cfg))
+        # Get git information
+        git_info = get_git_info()
+        
+        # Initialize wandb with config and git info
+        cfg_dict = vars(cfg)
+        cfg_dict.update(git_info)
+        
+        wandb.init(project="ct_retcon", config=cfg_dict)
+        
+        # Set up print capture
+        print_capture = WandBPrintCapture(log_metrics=True)
+        sys.stdout = print_capture
+        
+        # Set up error logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        logger = logging.getLogger()
+        wandb_handler = logging.StreamHandler()
+        wandb_handler.setLevel(logging.ERROR)
+        logger.addHandler(wandb_handler)
+    else:
+        print_capture = None
     print_config_summary(cfg, device)
     print(model)
 
@@ -381,6 +489,10 @@ def main_worker(rank: int, world_size: int, cfg):
         if _shutdown_requested:
             rank0_print(f"\n[{rank}] Shutdown requested, exiting training loop")
             break
+        
+        # Update epoch in print capture
+        if log_metrics and print_capture is not None:
+            print_capture.set_epoch(epoch)
         
         if sampler:
             sampler.set_epoch(epoch)
@@ -485,21 +597,22 @@ def main_worker(rank: int, world_size: int, cfg):
                 if save_diff:
                     viz.save(batch, recon, cfg.paths.save_dir, global_step)
                 if log_metrics:
-                    wandb_metrics = {
-                        "loss/total": loss.item(),
-                        "loss/recon": recon_loss.item(),
-                        "loss/perceptual": perc_loss.item(),
-                        "loss/detail": detail_loss.item(),
-                        "metrics/psnr": psnr_value,
-                        "metrics/ssim": ssim_value,
-                        "metrics/slice_psnr": slice_psnr_value,
-                        "metrics/slice_ssim": slice_ssim_value,
-                    }
-                    wandb_metrics.update(tensor_stats_dict("batch", batch))
-                    wandb_metrics.update(tensor_stats_dict("recon", recon))
-                    wandb.log(wandb_metrics, step=global_step)
-                    if wandb.run is not None and wandb_range_text is not None:
-                        wandb.run.summary["raw_input_range_text"] = wandb_range_text
+                     wandb_metrics = {
+                         "loss/total": loss.item(),
+                         "loss/recon": recon_loss.item(),
+                         "loss/perceptual": perc_loss.item(),
+                         "loss/detail": detail_loss.item(),
+                         "metrics/psnr": psnr_value,
+                         "metrics/ssim": ssim_value,
+                         "metrics/slice_psnr": slice_psnr_value,
+                         "metrics/slice_ssim": slice_ssim_value,
+                         "epoch": epoch,  # Log epoch with metrics
+                     }
+                     wandb_metrics.update(tensor_stats_dict("batch", batch))
+                     wandb_metrics.update(tensor_stats_dict("recon", recon))
+                     wandb.log(wandb_metrics, step=global_step)
+                     if wandb.run is not None and wandb_range_text is not None:
+                         wandb.run.summary["raw_input_range_text"] = wandb_range_text
 
             # --- Validation (all ranks run forward pass, only rank 0 logs)
             if do_validation:
@@ -547,6 +660,7 @@ def main_worker(rank: int, world_size: int, cfg):
                                 "val_metrics/ssim": val_ssim,
                                 "val_metrics/slice_psnr": val_slice_psnr,
                                 "val_metrics/slice_ssim": val_slice_ssim,
+                                "epoch": epoch,  # Log epoch with validation metrics
                             },
                             step=global_step,
                         )
@@ -567,6 +681,13 @@ def main_worker(rank: int, world_size: int, cfg):
 
     # Graceful cleanup on exit
     rank0_print(f"\n[{rank}] Finalizing training...")
+    
+    # Flush remaining logs to wandb
+    if log_metrics and print_capture is not None:
+        print_capture.flush()
+        if wandb.run is not None:
+            wandb.finish()
+    
     if use_cuda and world_size > 1:
         barrier()  # Ensure all processes reach this point
         cleanup()
