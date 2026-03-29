@@ -6,7 +6,18 @@ import re
 import signal
 import subprocess
 import sys
+import sysconfig
 from collections import deque
+
+# Ensure Python dev headers are discoverable for Triton/torch.compile
+_python_include = sysconfig.get_path("include")
+if _python_include and os.path.isfile(os.path.join(_python_include, "Python.h")):
+    os.environ["CPATH"] = _python_include + os.pathsep + os.environ.get("CPATH", "")
+else:
+    # Fall back to known cluster location
+    _fallback = f"/opt/python/{sysconfig.get_python_version()}.4/include/python{sysconfig.get_python_version()}"
+    if os.path.isfile(os.path.join(_fallback, "Python.h")):
+        os.environ["CPATH"] = _fallback + os.pathsep + os.environ.get("CPATH", "")
 
 import torch
 import wandb
@@ -27,7 +38,7 @@ from config import load_config
 from dc_gen.ae_model_zoo import DCAE_HF
 from evaluation import evaluate
 from multigpu import (
-    cleanup, init_distributed, is_main_process,
+    aggregate_metrics, cleanup, init_distributed, is_main_process,
     rank0_print, barrier, get_rank, get_world_size, wrap_ddp
 )
 from registry import dataset_registry, loss_registry
@@ -46,19 +57,19 @@ def get_git_info():
             ["git", "rev-parse", "HEAD"], text=True
         ).strip()
         git_info["git_commit_hash"] = commit_hash
-        
+
         # Get git status
         status = subprocess.check_output(
             ["git", "status", "--porcelain"], text=True
         ).strip()
         git_info["git_status"] = status if status else "clean"
-        
+
         # Get git diff
         diff = subprocess.check_output(
             ["git", "diff", "HEAD"], text=True
         ).strip()
         git_info["git_diff"] = diff if diff else "no changes"
-        
+
         # Get branch name
         branch = subprocess.check_output(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
@@ -66,7 +77,7 @@ def get_git_info():
         git_info["git_branch"] = branch
     except Exception as e:
         git_info["git_error"] = str(e)
-    
+
     return git_info
 
 
@@ -78,15 +89,15 @@ class WandBPrintCapture:
         self.original_stdout = sys.stdout
         self.current_epoch = 0
         self.current_step = 0
-        
+
     def set_epoch(self, epoch):
         """Update current epoch."""
         self.current_epoch = epoch
-    
+
     def set_step(self, step):
         """Update current step."""
         self.current_step = step
-        
+
     def write(self, message):
         self.original_stdout.write(message)
         if message.strip() and self.log_metrics:
@@ -94,12 +105,12 @@ class WandBPrintCapture:
             # Log to wandb in batches
             if len(self.buffer) >= 10:
                 self.flush_to_wandb()
-    
+
     def flush(self):
         self.original_stdout.flush()
         if self.buffer and self.log_metrics:
             self.flush_to_wandb()
-    
+
     def flush_to_wandb(self):
         if self.buffer and wandb.run is not None:
             log_text = "\n".join(self.buffer)
@@ -112,7 +123,7 @@ class WandBPrintCapture:
             except Exception:
                 pass
             self.buffer = []
-    
+
     def isatty(self):
         return self.original_stdout.isatty()
 
@@ -226,6 +237,7 @@ def print_config_summary(cfg, device):
     print(f"  WandB        : {cfg.logging.wandb}")
     print(f"  Viz Every    : {cfg.logging.viz_every}")
     print(f"  Validate Every: {cfg.logging.validate_every}")
+    print(f"  Val Max Batch : {cfg.logging.val_max_batches}")
     print()
 
 
@@ -356,11 +368,11 @@ def build_pipeline(cfg):
 
 def main_worker(rank: int, world_size: int, cfg):
     global _shutdown_requested
-    
+
     # Set up graceful shutdown handler
     signal.signal(signal.SIGINT, _shutdown_handler)
     signal.signal(signal.SIGTERM, _shutdown_handler)
-    
+
     use_cuda = torch.cuda.is_available()
     device = torch.device(
         "mps"
@@ -371,6 +383,11 @@ def main_worker(rank: int, world_size: int, cfg):
     )
     if use_cuda and world_size > 1:
         init_distributed(rank, world_size)
+
+    # Scale num_workers per GPU to avoid spawning too many processes
+    num_workers = cfg.training.num_workers
+    if use_cuda and world_size > 1:
+        num_workers = max(1, num_workers // world_size)
 
     pipeline, clip_transform = build_pipeline(cfg)
     dataset_cls = dataset_registry[cfg.dataset.name]
@@ -405,18 +422,20 @@ def main_worker(rank: int, world_size: int, cfg):
         batch_size=cfg.training.batch_size,
         shuffle=(sampler is None and cfg.training.shuffle_data),
         pin_memory=cfg.training.pin_memory,
-        num_workers=cfg.training.num_workers,
+        num_workers=num_workers,
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=sampler,
     )
 
+    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False) if use_cuda and world_size > 1 else None
     val_loader = DataLoader(
         val_dataset,
         batch_size=cfg.training.batch_size * 2,
         shuffle=False,
         pin_memory=cfg.training.pin_memory,
-        num_workers=cfg.training.num_workers,
+        num_workers=num_workers,
         prefetch_factor=cfg.training.prefetch_factor,
+        sampler=val_sampler,
     )
 
     dtype = getattr(torch, cfg.training.dtype)
@@ -456,21 +475,21 @@ def main_worker(rank: int, world_size: int, cfg):
     log_file = os.path.join(cfg.paths.save_dir, "training_log.txt")
     num_epochs = cfg.training.num_epochs
     log_metrics = cfg.logging.wandb
-    
+
     if log_metrics:
         # Get git information
         git_info = get_git_info()
-        
+
         # Initialize wandb with config and git info
         cfg_dict = vars(cfg)
         cfg_dict.update(git_info)
-        
+
         wandb.init(project="ct_retcon", config=cfg_dict)
-        
+
         # Set up print capture
         print_capture = WandBPrintCapture(log_metrics=True)
         sys.stdout = print_capture
-        
+
         # Set up error logging
         logging.basicConfig(
             level=logging.INFO,
@@ -489,16 +508,16 @@ def main_worker(rank: int, world_size: int, cfg):
         if _shutdown_requested:
             rank0_print(f"\n[{rank}] Shutdown requested, exiting training loop")
             break
-        
+
         # Update epoch in print capture
         if log_metrics and print_capture is not None:
             print_capture.set_epoch(epoch)
-        
+
         if sampler:
             sampler.set_epoch(epoch)
 
         rank0_print(f"epoch: {epoch} out of {num_epochs}")
-        rank0_print(f"dataset size: {len(dataset)}")
+        rank0_print(f"train set: {len(dataset)}, val set: {len(val_dataset)}")
 
         for i, batch in enumerate(loader):
             if _shutdown_requested:
@@ -520,10 +539,11 @@ def main_worker(rank: int, world_size: int, cfg):
                 raw_batch_range = clip_transform.pop_batch_ranges(len(batch))
 
             batch = batch.to(dtype=dtype, device=device, non_blocking=True)
+            if hasattr(batch, "as_tensor"):
+                batch = batch.as_tensor()
 
             with get_autocast_ctx(cfg, device):
-                raw = model.module if hasattr(model, 'module') else model
-                recon = raw.decoder(raw.encoder(batch))
+                recon = model(batch)
 
             recon_loss = loss_registry[cfg.objective.loss_fn](recon, batch)
             if perceptual_loss_fn is not None:
@@ -614,56 +634,62 @@ def main_worker(rank: int, world_size: int, cfg):
                      if wandb.run is not None and wandb_range_text is not None:
                          wandb.run.summary["raw_input_range_text"] = wandb_range_text
 
-            # --- Validation (all ranks run forward pass, only rank 0 logs)
+            # --- Validation (all ranks run forward pass, aggregate metrics)
             if do_validation:
-                val_losses, val_psnrs, val_ssims = [], [], []
-                val_slice_psnrs, val_slice_ssims = [], []
-                total = len(val_loader)
+               val_psnrs, val_ssims = [], []
+               val_slice_psnrs, val_slice_ssims = [], []
+               val_max = cfg.logging.val_max_batches
+               total = min(len(val_loader), val_max) if val_max else len(val_loader)
 
-                with torch.inference_mode():
-                    model.eval()
-                    for vi, val_batch in enumerate(val_loader):
-                        val_batch = val_batch.to(dtype=dtype, device=device, non_blocking=True)
+               with torch.inference_mode():
+                   model.eval()
+                   for vi, val_batch in enumerate(val_loader):
+                       if val_max and vi >= val_max:
+                           break
+                       val_batch = val_batch.to(dtype=dtype, device=device, non_blocking=True)
 
-                        with get_autocast_ctx(cfg, device):
-                            raw = model.module if hasattr(model, 'module') else model
-                            val_recon = raw.decoder(raw.encoder(val_batch))
-                        vl, vp, vs, vsp, vss = evaluate(val_recon, val_batch, loss)
+                       with get_autocast_ctx(cfg, device):
+                           val_recon = model(val_batch)
+                       _, vp, vs, vsp, vss = evaluate(val_recon, val_batch, None)
 
-                        val_losses.append(vl)
-                        val_psnrs.append(vp)
-                        val_ssims.append(vs)
-                        val_slice_psnrs.append(vsp)
-                        val_slice_ssims.append(vss)
+                       val_psnrs.append(vp)
+                       val_ssims.append(vs)
+                       val_slice_psnrs.append(vsp)
+                       val_slice_ssims.append(vss)
 
-                        if is_main_process():
-                            print(f"\rValidation [{vi + 1}/{total}]", end="")
-                model.train()
+                       if is_main_process():
+                           print(f"\rValidation [{vi + 1}/{total}]", end="")
+               model.train()
 
-                if is_main_process():
-                    print()
-                    val_loss = torch.tensor(val_losses).mean().item()
-                    val_psnr = torch.tensor(val_psnrs).mean().item()
-                    val_ssim = torch.tensor(val_ssims).mean().item()
-                    val_slice_psnr = torch.tensor(val_slice_psnrs).mean().item()
-                    val_slice_ssim = torch.tensor(val_slice_ssims).mean().item()
+               # Aggregate validation metrics across GPUs
+               val_metrics = aggregate_metrics(
+                   {
+                       "val_psnr": torch.tensor(val_psnrs).mean().item(),
+                       "val_ssim": torch.tensor(val_ssims).mean().item(),
+                       "val_slice_psnr": torch.tensor(val_slice_psnrs).mean().item(),
+                       "val_slice_ssim": torch.tensor(val_slice_ssims).mean().item(),
+                   },
+                   device,
+               )
 
-                    print(
-                        f"Validation Loss: {val_loss:.6f}, PSNR: {val_psnr:.6f}, SSIM: {val_ssim:.6f}, Slice PSNR: {val_slice_psnr:.6f}, Slice SSIM: {val_slice_ssim:.6f}"
-                    )
+               if is_main_process():
+                   print()
+                   print(
+                       f"Validation PSNR: {val_metrics['val_psnr']:.6f}, SSIM: {val_metrics['val_ssim']:.6f}, "
+                       f"Slice PSNR: {val_metrics['val_slice_psnr']:.6f}, Slice SSIM: {val_metrics['val_slice_ssim']:.6f}"
+                   )
 
-                    if log_metrics:
-                        wandb.log(
-                            {
-                                "val_loss/total": val_loss,
-                                "val_metrics/psnr": val_psnr,
-                                "val_metrics/ssim": val_ssim,
-                                "val_metrics/slice_psnr": val_slice_psnr,
-                                "val_metrics/slice_ssim": val_slice_ssim,
-                                "epoch": epoch,  # Log epoch with validation metrics
-                            },
-                            step=global_step,
-                        )
+                   if log_metrics:
+                       wandb.log(
+                           {
+                               "val_metrics/psnr": val_metrics["val_psnr"],
+                               "val_metrics/ssim": val_metrics["val_ssim"],
+                               "val_metrics/slice_psnr": val_metrics["val_slice_psnr"],
+                               "val_metrics/slice_ssim": val_metrics["val_slice_ssim"],
+                               "epoch": epoch,
+                           },
+                           step=global_step,
+                       )
 
             # --- Checkpointing (rank 0 only, no DDP-sync ops)
             if save_ckpt and is_main_process():
@@ -681,16 +707,16 @@ def main_worker(rank: int, world_size: int, cfg):
 
     # Graceful cleanup on exit
     rank0_print(f"\n[{rank}] Finalizing training...")
-    
+
     # Flush remaining logs to wandb
     if log_metrics and print_capture is not None:
         print_capture.flush()
         if wandb.run is not None:
             wandb.finish()
-    
+
     if use_cuda and world_size > 1:
         barrier()  # Ensure all processes reach this point
-        cleanup()
+
     rank0_print(f"[{rank}] Training completed")
 
 
@@ -719,13 +745,14 @@ if __name__ == "__main__":
         import socket
         import torch.multiprocessing as mp
 
-        # Pick a free port from the user's assigned cluster range before spawn
         if 'MASTER_PORT' not in os.environ:
             for port in [8972, 8973, 8974, 8975]:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     try:
                         s.bind(('', port))
                         os.environ['MASTER_PORT'] = str(port)
+                        os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = "1"
+                        os.environ["TRITON_CACHE_DIR"] = "/tmp/triton_cache"
                         break
                     except OSError:
                         continue

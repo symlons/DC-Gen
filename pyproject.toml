@@ -30,6 +30,7 @@ dependencies = [
     "matplotlib",
     "monai",
     "lpips",
+    "triton>=3.6.0",
 ]
 
 [tool.black]

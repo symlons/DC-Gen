@@ -83,6 +83,7 @@ class LoggingConfig:
     save_volumes: bool = True
     viz_every: int = 500
     validate_every: int = 200000
+    val_max_batches: Optional[int] = None
 
 
 @dataclass

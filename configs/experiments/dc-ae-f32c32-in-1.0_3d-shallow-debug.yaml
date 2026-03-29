@@ -19,7 +19,7 @@ hparams:
   learning_rate: 2e-5
 
 logging:
-  wandb: True
+  wandb: False
   save_volumes: False
   viz_every: 10
   validate_every: 1000000
