@@ -69,9 +69,27 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
 
     try:
         ckpt = torch.load(ckpt_path, map_location=device)
+        state_dict = ckpt["model_state_dict"]
+        
         base_model = _get_base_model(model)
-        base_model.load_state_dict(ckpt["model_state_dict"])
-        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        
+        has_orig_mod = any(k.startswith("_orig_mod.") for k in state_dict.keys())
+        current_has_orig_mod = any(k.startswith("_orig_mod.") for k in base_model.state_dict().keys())
+        
+        if has_orig_mod and not current_has_orig_mod:
+            state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+        elif not has_orig_mod and current_has_orig_mod:
+            state_dict = {f"_orig_mod.{k}": v for k, v in state_dict.items()}
+        
+        base_model.load_state_dict(state_dict)
+        try:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        except RuntimeError as e:
+            if "parameter group" in str(e):
+                print(f"[WARNING] Skipped loading optimizer state due to parameter group mismatch: {e}")
+                print("This can happen when trainable parameters change between training phases.")
+            else:
+                raise
         if ema_model is not None and "ema_state_dict" in ckpt:
             ema_model.load_state_dict(ckpt["ema_state_dict"])
     except Exception as e:

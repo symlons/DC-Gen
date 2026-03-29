@@ -11,7 +11,19 @@ paths:
   checkpoint_dir: "/cluster/home/kostfab1/DC-Gen/checkpoints/checkpoints_v04_shallow"
 
 training:
-  batch_size: 4
+  batch_size: 2
+  trainable_ae_params:
+    - ["encoder.project_out.*", "decoder.project_in.*"]
+
+pipeline:
+    resize_hw: [512, 512]
 
 hparams:
   learning_rate: 2e-5
+
+logging:
+  wandb: True
+  wandb_resume_run: True
+  save_volumes: True
+  viz_every: 1000
+  validate_every: 10000

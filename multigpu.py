@@ -15,12 +15,17 @@ def main_process_only():
 
 @contextmanager
 def main_process_first():
-    if not dist.is_initialized() or dist.get_rank() == 0:
+    if not dist.is_initialized():
         yield
+        return
+    if dist.get_rank() == 0:
+        yield
+        dist.barrier()
     else:
         dist.barrier()
         yield
-    if dist.is_initialized():
+        dist.barrier()
+    if dist.get_rank() == 0:
         dist.barrier()
 
 def init_distributed(rank: int, world_size: int, port: int = None):
@@ -46,6 +51,7 @@ def init_distributed(rank: int, world_size: int, port: int = None):
         rank=rank,
         world_size=world_size,
         timeout=timedelta(minutes=5),
+        device_id=device,
     )
 def ddp_worker(rank: int, world_size: int, run_worker_fn, cfg, port: int = 12355, run_uuid=None):
     init_distributed(rank, world_size, port)

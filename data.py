@@ -10,6 +10,13 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 
+def collate_fn_skip_none(batch):
+    batch = [item for item in batch if item is not None]
+    if not batch:
+        return None
+    return torch.stack(batch)
+
+
 class HDF5Backend:
     def __init__(self, hdf_path, group_names=["Vol_full"], dims="2d", n_slices=None):
         self.hdf_path = hdf_path
@@ -176,8 +183,11 @@ class NiftiBackend:
         entry = self.index_map[idx]
         file = entry[0]
 
-        img = self._get_cached_img(file)
-        data = np.asarray(img.dataobj)
+        try:
+            img = self._get_cached_img(file)
+            data = np.asarray(img.dataobj)
+        except (EOFError, OSError) as e:
+            raise RuntimeError(f"Corrupted file: {file}. Error: {e}")
 
         if self.load_volumes:
             start, end = entry[1]
@@ -228,7 +238,11 @@ class CTVolumeDataset(Dataset):
         return len(self.backend.index_map)
 
     def __getitem__(self, idx):
-        vol = self.backend.get_volume(idx)
+        try:
+            vol = self.backend.get_volume(idx)
+        except (EOFError, OSError, RuntimeError) as e:
+            print(f"Skipping corrupted sample at idx {idx}: {e}")
+            return None
         if self.transform:
             vol = self.transform(vol)
         return vol

@@ -63,6 +63,7 @@ class TrainingConfig:
     checkpoint_every: int = 1000
     max_checkpoints: int = 4
     use_autocast: bool = True
+    trainable_ae_params: Optional[List[List[str]]] = None
 
 
 @dataclass
@@ -79,12 +80,12 @@ class ModelConfig:
 
 @dataclass
 class LoggingConfig:
-    wandb: bool = True
+    wandb: bool = False
     wandb_resume_run: bool = True
     save_volumes: bool = True
     viz_every: int = 500
     validate_every: int = 200000
-    val_max_batches: Optional[int] = 20
+    val_max_batches: Optional[int] = None
     print_model_arch: bool = False
 
 

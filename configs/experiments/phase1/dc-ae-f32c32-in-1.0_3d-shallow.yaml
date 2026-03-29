@@ -1,0 +1,27 @@
+dims: "3d"
+
+experiment:
+  name: "shallow-v4-experiment"
+
+model:
+  name: "dc-ae-f32c32-in-1.0_3d-shallow"
+
+paths:
+  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase1"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-Gen/checkpoints/checkpoints_v04_shallow_phase1"
+
+training:
+  batch_size: 4
+
+pipeline:
+    resize_hw: [256, 256]
+
+hparams:
+  learning_rate: 2e-5
+
+logging:
+  wandb: False
+  wandb_resume_run: True
+  save_volumes: True
+  viz_every: 1000
+  validate_every: 10

@@ -33,6 +33,7 @@ from monai.transforms import (
     SpatialPad,
 )
 from torch.utils.data import DataLoader, DistributedSampler
+from data import collate_fn_skip_none
 
 from basics import get_autocast_ctx, resolve_autocast_dtype
 from checkpointing import load_checkpoint, save_checkpoint
@@ -41,7 +42,8 @@ from dc_gen.ae_model_zoo import DCAE_HF
 from evaluation import evaluate
 from multigpu import (
     aggregate_metrics, cleanup, init_distributed, is_main_process,
-    rank0_print, barrier, get_rank, get_world_size, wrap_ddp
+    rank0_print, barrier, get_rank, get_world_size, wrap_ddp,
+    main_process_first,
 )
 from registry import dataset_registry, loss_registry
 from viz import Visualize
@@ -395,21 +397,24 @@ def main_worker(rank: int, world_size: int, cfg):
 
     pipeline, clip_transform = build_pipeline(cfg)
     dataset_cls = dataset_registry[cfg.dataset.name]
-    dataset = dataset_cls(
-        nifti_dir=cfg.paths.nifti_dir,
-        group_names=cfg.dataset.group_names,
-        dims=cfg.dims,
-        n_slices=cfg.pipeline.n_slices,
-        transform=pipeline,
-    )
+    rank0_print("[setup] Building datasets (rank 0 first to populate index cache)...")
+    with main_process_first():
+        dataset = dataset_cls(
+            nifti_dir=cfg.paths.nifti_dir,
+            group_names=cfg.dataset.group_names,
+            dims=cfg.dims,
+            n_slices=cfg.pipeline.n_slices,
+            transform=pipeline,
+        )
 
-    val_dataset = dataset_cls(
-        nifti_dir=cfg.paths.nifti_val_dir,
-        group_names=cfg.dataset.group_names,
-        dims=cfg.dims,
-        n_slices=cfg.pipeline.n_slices,
-        transform=pipeline,
-    )
+        val_dataset = dataset_cls(
+            nifti_dir=cfg.paths.nifti_val_dir,
+            group_names=cfg.dataset.group_names,
+            dims=cfg.dims,
+            n_slices=cfg.pipeline.n_slices,
+            transform=pipeline,
+        )
+    rank0_print(f"[setup] Datasets ready. Train: {len(dataset)}, Val: {len(val_dataset)}")
 
     if use_cuda and world_size > 1:
         sampler = DistributedSampler(
@@ -429,6 +434,7 @@ def main_worker(rank: int, world_size: int, cfg):
         num_workers=num_workers,
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=sampler,
+        persistent_workers=num_workers > 0,
     )
 
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False) if use_cuda and world_size > 1 else None
@@ -440,20 +446,23 @@ def main_worker(rank: int, world_size: int, cfg):
         num_workers=num_workers,
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=val_sampler,
+        collate_fn=collate_fn_skip_none,
+        persistent_workers=num_workers > 0,
     )
 
+    rank0_print("[setup] Loading model...")
     dtype = getattr(torch, cfg.training.dtype)
     model = DCAE_HF(model_name=cfg.model.name).to(dtype=dtype, device=device)
-    # trainable_ae_params = [["encoder.project_out.*", "decoder.project_in.*"]]
-    trainable_ae_params = None
-    param_groups = configure_trainable_params(model, trainable_ae_params)
+    param_groups = configure_trainable_params(model, cfg.training.trainable_ae_params)
     print_param_group_modules(model, param_groups)
 
     if getattr(cfg.model, "compile", False):
+        rank0_print("[setup] Compiling model with torch.compile...")
         model = torch.compile(model)
     if use_cuda and world_size > 1:
         model = wrap_ddp(model, device)
     model.train()
+    rank0_print("[setup] Model ready.")
 
     perceptual_loss_fn = None
     if cfg.objective.perceptual_weight > 0:
@@ -506,11 +515,11 @@ def main_worker(rank: int, world_size: int, cfg):
     else:
         print_capture = None
     print_config_summary(cfg, device)
-    
+
     # Conditionally print model architecture and log to wandb
     if cfg.logging.print_model_arch:
         print(model)
-    
+
     # Log model architecture to wandb if enabled
     if log_metrics:
         model_str_buffer = io.StringIO()
@@ -524,12 +533,12 @@ def main_worker(rank: int, world_size: int, cfg):
             except Exception as e:
                 print(f"[WARNING] Failed to log model architecture to wandb: {e}")
 
+    rank0_print(f"[setup] Starting training loop (global_step={global_step})...")
     for epoch in range(num_epochs):
         if _shutdown_requested:
             rank0_print(f"\n[{rank}] Shutdown requested, exiting training loop")
             break
 
-        # Update epoch in print capture
         if log_metrics and print_capture is not None:
             print_capture.set_epoch(epoch)
 
@@ -540,7 +549,7 @@ def main_worker(rank: int, world_size: int, cfg):
         train_size = len(dataset)
         val_size = len(val_dataset)
         rank0_print(f"train set: {train_size}, val set: {val_size}")
-        
+
         # Log dataset sizes to wandb
         if log_metrics and is_main_process():
             wandb.log({
@@ -664,22 +673,29 @@ def main_worker(rank: int, world_size: int, cfg):
                      if wandb.run is not None and wandb_range_text is not None:
                          wandb.run.summary["raw_input_range_text"] = wandb_range_text
 
-            # --- Validation (all ranks run forward pass, aggregate metrics)
+            # --- Validation (all ranks must participate for aggregate_metrics)
             if do_validation:
+               barrier()
+               rank0_print(f"\n[val] Starting validation at step {global_step}...")
+               sys.stdout.flush()
                val_psnrs, val_ssims = [], []
                val_slice_psnrs, val_slice_ssims = [], []
                val_max = cfg.logging.val_max_batches
                total = min(len(val_loader), val_max) if val_max else len(val_loader)
 
+               raw_model = model.module if hasattr(model, "module") else model
+
                with torch.inference_mode():
-                   model.eval()
+                   raw_model.eval()
                    for vi, val_batch in enumerate(val_loader):
+                       if val_batch is None:
+                           continue
                        if val_max and vi >= val_max:
                            break
                        val_batch = val_batch.to(dtype=dtype, device=device, non_blocking=True)
 
                        with get_autocast_ctx(cfg, device):
-                           val_recon = model(val_batch)
+                           val_recon = raw_model(val_batch)
                        _, vp, vs, vsp, vss = evaluate(val_recon, val_batch, None)
 
                        val_psnrs.append(vp)
@@ -688,16 +704,15 @@ def main_worker(rank: int, world_size: int, cfg):
                        val_slice_ssims.append(vss)
 
                        if is_main_process():
-                           print(f"\rValidation [{vi + 1}/{total}]", end="")
-               model.train()
+                           print(f"\rValidation [{vi + 1}/{total}]", end="", flush=True)
+                   raw_model.train()
 
-               # Aggregate validation metrics across GPUs
                val_metrics = aggregate_metrics(
                    {
-                       "val_psnr": torch.tensor(val_psnrs).mean().item(),
-                       "val_ssim": torch.tensor(val_ssims).mean().item(),
-                       "val_slice_psnr": torch.tensor(val_slice_psnrs).mean().item(),
-                       "val_slice_ssim": torch.tensor(val_slice_ssims).mean().item(),
+                       "val_psnr": torch.tensor(val_psnrs).mean().item() if val_psnrs else 0.0,
+                       "val_ssim": torch.tensor(val_ssims).mean().item() if val_ssims else 0.0,
+                       "val_slice_psnr": torch.tensor(val_slice_psnrs).mean().item() if val_slice_psnrs else 0.0,
+                       "val_slice_ssim": torch.tensor(val_slice_ssims).mean().item() if val_slice_ssims else 0.0,
                    },
                    device,
                )
@@ -720,6 +735,7 @@ def main_worker(rank: int, world_size: int, cfg):
                            },
                            step=global_step,
                        )
+               rank0_print(f"[val] Validation complete at step {global_step}")
 
             # --- Checkpointing (rank 0 only, no DDP-sync ops)
             if save_ckpt and is_main_process():

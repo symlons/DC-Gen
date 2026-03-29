@@ -760,7 +760,8 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[0,5,10,2,2,2] "
             "decoder.norm=rms2d decoder.act=silu"
         )
-    elif name == "dc-ae-f32c32-in-1.0_3d-shallow":
+    # ------------- shallow
+    elif name == "dc-ae-f32c32-in-1.0_3d-shallow": # isotropic
         cfg_str = (
             "dims=3d "
             "in_channels=1 "
@@ -771,7 +772,45 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[1,1,1,1,1,1] "
             "decoder.norm=rms2d decoder.act=silu"
         )
-    elif name == "dc-ae-f32c32-in-1.0_3d-depth-last":
+    elif name == "dc-ae-f32c32-in-1.0_3d-shallow-anisotropic":
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=32 "
+            "encoder.kernel_size=[[1,3,3],[1,3,3],[1,3,3],[1,3,3],[1,3,3],[3,3,3]] "
+            "decoder.kernel_size=[[1,3,3],[1,3,3],[1,3,3],[1,3,3],[1,3,3],[3,3,3]] "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.norm=rms2d decoder.act=silu"
+        )
+    elif name == "dc-ae-f32c32-in-1.0_3d-shallow-depth-last": # isotropic
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=32 "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.norm=rms2d decoder.act=silu"
+        )
+    elif name == "dc-ae-f32c32-in-1.0_3d-shallow-anisotropic-depth-last":
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=32 "
+            "encoder.kernel_size=[[1,3,3],[1,3,3],[1,3,3],[1,3,3],[1,3,3],[3,3,3]] "
+            "decoder.kernel_size=[[1,3,3],[1,3,3],[1,3,3],[1,3,3],[1,3,3],[3,3,3]] "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.norm=rms2d decoder.act=silu"
+        )
+    # ------------- regular
+    elif name == "dc-ae-f32c32-in-1.0_3d-anisotropic-depth-last": # changed from  dc-ae-f32c32-in-1.0_3d-depth-last
         cfg_str = (
             "dims=3d "
             "in_channels=1 "
@@ -785,13 +824,11 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
             # "decoder.norm=[bn3d,bn3d,bn3d,bn3d,bn3d,bn3d] decoder.act=[relu,relu,relu,silu,silu,silu]"
             "decoder.norm=rms2d decoder.act=silu"
         )
-    elif name == "dc-ae-f32c32-in-1.0_3d-depth-last-isotropic":
+    elif name == "dc-ae-f32c32-in-1.0_3d-depth-last":
         cfg_str = (
             "dims=3d "
             "in_channels=1 "
             "latent_channels=32 "
-            "encoder.kernel_size=[[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3]] "
-            "decoder.kernel_size=[[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3]] "
             "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
             "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[2,2,2,3,3,3] "
             "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
@@ -852,7 +889,7 @@ def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
         raise NotImplementedError
     cfg = OmegaConf.from_dotlist(cfg_str.split(" "))
     cfg: DCAEConfig = OmegaConf.to_object(OmegaConf.merge(OmegaConf.structured(DCAEConfig), cfg))
-    if name == "dc-ae-f32c32-in-1.0_3d-depth-last":
+    if name in ["dc-ae-f32c32-in-1.0_3d-shallow-anisotropic-depth-last", "dc-ae-f32c32-in-1.0_3d-shallow-depth-last", "dc-ae-f32c32-in-1.0_3d-anisotropic-depth-last", "dc-ae-f32c32-in-1.0_3d-depth-last"]:
         encoder_factors = ((1, 2, 2), (1, 2, 2), (1, 2, 2), (1, 2, 2), (2, 2, 2))
         # encoder_factors = ((2, 2, 2), (2, 2, 2), (2, 2, 2), (2, 2, 2), (2, 2, 2))
         cfg.encoder.downsample_factor_list = encoder_factors
