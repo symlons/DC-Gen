@@ -38,6 +38,7 @@ class PipelineConfig:
 @dataclass
 class ExperimentConfig:
     name: Optional[str] = None
+    description: Optional[str] = None
 
 
 @dataclass
@@ -84,6 +85,7 @@ class LoggingConfig:
     viz_every: int = 500
     validate_every: int = 200000
     val_max_batches: Optional[int] = 20
+    print_model_arch: bool = False
 
 
 @dataclass

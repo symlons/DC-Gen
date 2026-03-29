@@ -74,6 +74,7 @@ class NiftiBackend:
     ):
         import json
         import os
+        import hashlib
 
         self.nifti_dir = nifti_dir
         self.csv_metadata = csv_metadata
@@ -83,18 +84,23 @@ class NiftiBackend:
 
         self.cache_size = cache_size
         self.cache = OrderedDict()
-
-        self.files = self._collect_files(fraction, seed)
         self.seed = seed
+        self.fraction = fraction
 
         mode = "3d" if self.load_volumes else "2d"
-        self.cache_path = os.path.expanduser(f"~/DC-Gen/index_map_{mode}.json")
+        if self.nifti_dir:
+            dir_hash = hashlib.md5(self.nifti_dir.encode()).hexdigest()[:8]
+        else:
+            dir_hash = "metadata"
+        frac_str = f"_{fraction:.2f}" if fraction < 1.0 else ""
+        self.cache_path = os.path.expanduser(f"~/DC-Gen/index_map_{mode}_{dir_hash}{frac_str}.json")
 
         if Path(self.cache_path).exists():
             with open(self.cache_path, "r") as f:
                 self.index_map = json.load(f)
             return
 
+        self.files = self._collect_files(fraction, seed)
         self._build_index_map()
 
         with open(self.cache_path, "w") as f:

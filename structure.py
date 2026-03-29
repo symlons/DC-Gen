@@ -208,6 +208,8 @@ def print_config_summary(cfg, device):
     resolved_autocast_dtype = resolve_autocast_dtype(cfg, device)
     print("Config summary")
     print(f"  Experiment   : {cfg.experiment.name}")
+    if cfg.experiment.description:
+        print(f"  Description  : {cfg.experiment.description}")
     print(f"  Dims         : {cfg.dims}")
     print(f"  Model        : {cfg.model.name}")
     print(f"  Compile      : {cfg.model.compile}")
@@ -504,7 +506,23 @@ def main_worker(rank: int, world_size: int, cfg):
     else:
         print_capture = None
     print_config_summary(cfg, device)
-    print(model)
+    
+    # Conditionally print model architecture and log to wandb
+    if cfg.logging.print_model_arch:
+        print(model)
+    
+    # Log model architecture to wandb if enabled
+    if log_metrics:
+        model_str_buffer = io.StringIO()
+        print(model, file=model_str_buffer)
+        model_arch_str = model_str_buffer.getvalue()
+        if wandb.run is not None:
+            try:
+                wandb.log({
+                    "model_architecture": wandb.Html(f"<pre>{model_arch_str}</pre>"),
+                }, commit=False)
+            except Exception as e:
+                print(f"[WARNING] Failed to log model architecture to wandb: {e}")
 
     for epoch in range(num_epochs):
         if _shutdown_requested:
@@ -519,7 +537,17 @@ def main_worker(rank: int, world_size: int, cfg):
             sampler.set_epoch(epoch)
 
         rank0_print(f"epoch: {epoch} out of {num_epochs}")
-        rank0_print(f"train set: {len(dataset)}, val set: {len(val_dataset)}")
+        train_size = len(dataset)
+        val_size = len(val_dataset)
+        rank0_print(f"train set: {train_size}, val set: {val_size}")
+        
+        # Log dataset sizes to wandb
+        if log_metrics and is_main_process():
+            wandb.log({
+                "dataset/train_size": train_size,
+                "dataset/val_size": val_size,
+                "epoch": epoch
+            }, commit=False)
 
         for i, batch in enumerate(loader):
             if _shutdown_requested:

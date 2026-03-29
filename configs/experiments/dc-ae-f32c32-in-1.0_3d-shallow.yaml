@@ -1,5 +1,8 @@
 dims: "3d"
 
+experiment:
+  name: "shallow-v4-experiment"
+
 model:
   name: "dc-ae-f32c32-in-1.0_3d-shallow"
 

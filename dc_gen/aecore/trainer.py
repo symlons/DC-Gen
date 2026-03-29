@@ -77,6 +77,7 @@ class AECoreTrainerConfig(BaseTrainerConfig):
     base_batch_size: int = 32
     adaptive_latent_channels: Optional[tuple[int]] = None
     eval_adaptive_latent_channels: Optional[tuple[int]] = "${.adaptive_latent_channels}"
+    val_data_fraction: float = 1.0
 
     # model
     model: str = MISSING
@@ -128,6 +129,9 @@ class AECoreTrainer(BaseTrainer):
                 data_provider_cfg = possible_eval_data_providers[eval_data_provider_name][0](
                     resolution=resolution, batch_size=batch_size
                 )
+                if self.cfg.val_data_fraction < 1.0:
+                    data_provider_cfg.val_data_fraction = self.cfg.val_data_fraction
+                    data_provider_cfg.seed = self.cfg.seed
                 data_provider = possible_eval_data_providers[eval_data_provider_name][1](data_provider_cfg)
             else:
                 raise ValueError(f"eval data provider {eval_data_provider_name} is not supported")

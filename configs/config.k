@@ -30,6 +30,7 @@ schema Pipeline:
 
 schema Experiment:
     name?: str
+    description?: str
 
 schema Training:
     num_epochs: int = 10

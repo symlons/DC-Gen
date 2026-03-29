@@ -41,6 +41,7 @@ class AECoreDataProviderConfig(BaseDataProviderConfig):
     vlm_caption_path: Optional[str] = None
     min_h: Optional[int] = None
     min_w: Optional[int] = None
+    val_data_fraction: float = 1.0
 
 
 class AECoreDataProvider(BaseDataProvider):
@@ -87,6 +88,16 @@ class AECoreDataProvider(BaseDataProvider):
     def build_filtered_dataset(self, complete_dataset: Dataset, mask: bool | np.ndarray) -> Dataset:
         if mask is not True:
             indices = np.where(mask)[0]
+        else:
+            indices = np.arange(len(complete_dataset))
+        
+        if self.cfg.val_data_fraction < 1.0:
+            rng = np.random.RandomState(self.cfg.seed)
+            num_samples = max(1, int(len(indices) * self.cfg.val_data_fraction))
+            selected_indices = rng.choice(indices, size=num_samples, replace=False)
+            indices = selected_indices
+        
+        if mask is not True or self.cfg.val_data_fraction < 1.0:
             dataset = MultiResolutionSubset(complete_dataset, indices)
         else:
             dataset = complete_dataset
