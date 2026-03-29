@@ -1,8 +1,10 @@
-import os
 import glob
+import os
 from collections import deque
+
 import torch
 import wandb
+
 
 def _get_base_model(model):
     if hasattr(model, "module"):
@@ -12,17 +14,19 @@ def _get_base_model(model):
     return model
 
 
-def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque, max_checkpoints: int):
+def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque, max_checkpoints: int, ema_model=None):
     os.makedirs(save_dir, exist_ok=True)
     ckpt_path = os.path.join(save_dir, f"checkpoint_iter{it}.pt")
 
     base_model = _get_base_model(model)
     checkpoint = {
-        'global_step': it,
-        'model_state_dict': base_model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict()
+        "global_step": it,
+        "model_state_dict": base_model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
     }
-    
+    if ema_model is not None:
+        checkpoint["ema_state_dict"] = ema_model.state_dict()
+
     # Save wandb run ID if logging
     if wandb.run is not None:
         checkpoint['wandb_run_id'] = wandb.run.id
@@ -49,7 +53,7 @@ def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque
                 print(f"Failed to delete old checkpoint {old_ckpt}: {e}")
 
 
-def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device):
+def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=None):
     resume = getattr(cfg.training, "resume_from_checkpoint", False)
     if not resume:
         return 0, None
@@ -68,6 +72,8 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device):
         base_model = _get_base_model(model)
         base_model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if ema_model is not None and "ema_state_dict" in ckpt:
+            ema_model.load_state_dict(ckpt["ema_state_dict"])
     except Exception as e:
         print(f"Failed to load checkpoint {ckpt_path}: {e}")
         return 0, None
