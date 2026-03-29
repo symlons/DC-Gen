@@ -1,8 +1,11 @@
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import torch
 from omegaconf import OmegaConf
+
+EXPERIMENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "experiments")
 
 
 @dataclass
@@ -12,24 +15,11 @@ class DatasetConfig:
     volume: Optional[str] = None
 
 
-# @dataclass
-# class PathsConfig:
-#     hdf_path: str = "/Users/sfkost/storage/ct_rate_train_batch_0_v13.hdf"
-#     checkpoint_dir: str = "/Users/sfkost/storage/fun"
-#     save_dir: str = "/Users/sfkost/storage/fun"
-
-# @dataclass
-# class PathsConfig:
-#     hdf_path: str = "/mnt/Volume-eV4BofCN/ct_rate_train_batch_0_v13.hdf"
-#     checkpoint_dir: str = "/mnt/checkpoints"
-#     save_dir: str = "/mnt/Volume-eV4BofCN/artifacts_3d_33"
-
-
 @dataclass
 class PathsConfig:
     hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
-    checkpoint_dir: str = "/cluster/home/kostfab1/DC-GEN/checkpoints/dc_ae_3d_v04_shallow"
-    save_dir: str = "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow"
+    checkpoint_dir: str = ""
+    save_dir: str = ""
     nifti_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
     nifti_val_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
 
@@ -89,9 +79,10 @@ class ModelConfig:
 @dataclass
 class LoggingConfig:
     wandb: bool = True
+    wandb_resume_run: bool = True
     save_volumes: bool = True
     viz_every: int = 500
-    validate_every: int = 50000
+    validate_every: int = 200000
 
 
 @dataclass
@@ -181,16 +172,34 @@ def validate_and_finalize_config(cfg):
                 "3D config must set pipeline.n_slices or pipeline.resize_depth"
             )
 
+    if not cfg.paths.save_dir or not cfg.paths.checkpoint_dir:
+        raise ValueError(
+            f"No paths configured for model {cfg.model.name!r}. "
+            f"Create an experiment YAML in configs/experiments/ or set paths explicitly."
+        )
+
     if cfg.experiment.name is None:
         cfg.experiment.name = cfg.model.name
 
     return cfg
 
 
-def load_config(yaml_path: str = None):
+def load_config(yaml_path: str = None, experiment: str = None):
     cfg = OmegaConf.structured(Config)
+
+    if experiment:
+        exp_path = os.path.join(EXPERIMENTS_DIR, f"{experiment}.yaml")
+        if not os.path.isfile(exp_path):
+            available = [f.removesuffix(".yaml") for f in os.listdir(EXPERIMENTS_DIR) if f.endswith(".yaml")]
+            raise FileNotFoundError(
+                f"Experiment '{experiment}' not found at {exp_path}. "
+                f"Available: {available}"
+            )
+        cfg = OmegaConf.merge(cfg, OmegaConf.load(exp_path))
+
     if yaml_path:
         yaml_cfg = OmegaConf.load(yaml_path)
         cfg = OmegaConf.merge(cfg, yaml_cfg)
+
     cfg = OmegaConf.to_object(cfg)
     return validate_and_finalize_config(cfg)

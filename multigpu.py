@@ -23,16 +23,29 @@ def main_process_first():
     if dist.is_initialized():
         dist.barrier()
 
-def init_distributed(rank: int, world_size: int, port: int = 12355):
+def init_distributed(rank: int, world_size: int, port: int = None):
     if not torch.cuda.is_available() or world_size == 1:
         return  # no DDP needed
+    
     device = torch.device(f"cuda:{rank}")
     torch.cuda.set_device(device)
+    
+    # Set environment variables for DDP
+    os.environ['MASTER_ADDR'] = os.environ.get('MASTER_ADDR', '127.0.0.1')
+    
+    # MASTER_PORT must already be set before spawning to avoid race conditions.
+    # If not set, use provided port or fall back to a fixed default.
+    if 'MASTER_PORT' not in os.environ:
+        if port is None:
+            port = 8972
+        os.environ['MASTER_PORT'] = str(port)
+    
+    from datetime import timedelta
     dist.init_process_group(
         backend="nccl",
-        init_method=f"tcp://127.0.0.1:{port}",
+        rank=rank,
         world_size=world_size,
-        rank=rank
+        timeout=timedelta(minutes=5),
     )
 def ddp_worker(rank: int, world_size: int, run_worker_fn, cfg, port: int = 12355, run_uuid=None):
     init_distributed(rank, world_size, port)
@@ -42,8 +55,11 @@ def ddp_worker(rank: int, world_size: int, run_worker_fn, cfg, port: int = 12355
         cleanup()
 
 def cleanup():
-    if dist.is_initialized():
-        dist.destroy_process_group()
+     try:
+         if dist.is_initialized():
+             dist.destroy_process_group()
+     except Exception as e:
+         print(f"[WARNING] Error during cleanup: {e}")
 
 def is_main_process() -> bool:
     return not dist.is_initialized() or dist.get_rank() == 0
@@ -83,7 +99,7 @@ def wrap_ddp(model: torch.nn.Module, device: torch.device):
     return model
 
 __all__ = [
-    "init_distributed", "cleanup", "distributed_main_first", "is_main_process",
+    "init_distributed", "cleanup", "main_process_first", "main_process_only", "is_main_process",
     "get_rank", "get_world_size", "barrier", "rank0_print", "broadcast_model",
     "aggregate_metrics", "ddp_worker", "wrap_ddp"
 ]

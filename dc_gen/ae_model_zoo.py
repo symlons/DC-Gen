@@ -146,6 +146,9 @@ class DCAE_HF(DCAE, PyTorchModelHubMixin):
         cfg = create_dc_ae_model_cfg(model_name)
         DCAE.__init__(self, cfg)
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.decode(self.encode(x))
+
 
 class AutoencoderKL(nn.Module):
     def __init__(self, model_name: str):

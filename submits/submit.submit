@@ -55,6 +55,6 @@ source /cluster/home/kostfab1/dev/bin/activate
 # --------------------------------------------------------------------------------------
 # run
 # --------------------------------------------------------------------------------------
-python3 structure.py &
+python3 structure.py --experiment dc-ae-f32c32-in-1.0_3d-shallow &
 child_pid=$!
 wait $child_pid

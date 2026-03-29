@@ -1,0 +1,14 @@
+dims: "2d"
+
+model:
+  name: "dc-ae-f32c32-in-1.0"
+
+paths:
+  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v03_2d"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v03_2d"
+
+training:
+  batch_size: 2
+
+hparams:
+  learning_rate: 2e-5

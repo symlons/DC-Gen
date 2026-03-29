@@ -1,0 +1,24 @@
+dims: "3d"
+
+model:
+  name: "dc-ae-f32c32-in-1.0_3d-shallow"
+  compile: true
+
+paths:
+  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_debug"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-Gen/checkpoints/checkpoints_v04_shallow_debug"
+
+training:
+  batch_size: 4
+  num_epochs: 2
+  num_workers: 32
+  checkpoint_every: 30
+
+hparams:
+  learning_rate: 2e-5
+
+logging:
+  wandb: False
+  save_volumes: False
+  viz_every: 10
+  validate_every: 1000000

@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+import signal
 from collections import deque
 
 import torch
@@ -21,9 +22,20 @@ from checkpointing import load_checkpoint, save_checkpoint
 from config import load_config
 from dc_gen.ae_model_zoo import DCAE_HF
 from evaluation import evaluate
-from multigpu import cleanup, init_distributed, main_process_only
+from multigpu import (
+    cleanup, init_distributed, is_main_process,
+    rank0_print, barrier, get_rank, get_world_size, wrap_ddp
+)
 from registry import dataset_registry, loss_registry
 from viz import Visualize
+
+# Global flag for graceful shutdown
+_shutdown_requested = False
+
+def _shutdown_handler(signum, frame):
+    global _shutdown_requested
+    _shutdown_requested = True
+    rank0_print(f"\n[{os.getpid()}] Shutdown signal received. Finishing current batch...")
 
 
 def configure_trainable_params(model, trainable_ae_params):
@@ -259,6 +271,12 @@ def build_pipeline(cfg):
 
 
 def main_worker(rank: int, world_size: int, cfg):
+    global _shutdown_requested
+    
+    # Set up graceful shutdown handler
+    signal.signal(signal.SIGINT, _shutdown_handler)
+    signal.signal(signal.SIGTERM, _shutdown_handler)
+    
     use_cuda = torch.cuda.is_available()
     device = torch.device(
         "mps"
@@ -327,7 +345,7 @@ def main_worker(rank: int, world_size: int, cfg):
     if getattr(cfg.model, "compile", False):
         model = torch.compile(model)
     if use_cuda and world_size > 1:
-        model = wrap_ddp(model, device, rank, world_size)
+        model = wrap_ddp(model, device)
     model.train()
 
     perceptual_loss_fn = None
@@ -347,7 +365,7 @@ def main_worker(rank: int, world_size: int, cfg):
         lr=cfg.hparams.learning_rate,
         weight_decay=cfg.hparams.weight_decay,
     )
-    global_step = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device)
+    global_step, wandb_run_id = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device)
 
     loss_history, psnr_history, ssim_history = [], [], []
     checkpoint_queue = deque()
@@ -360,16 +378,22 @@ def main_worker(rank: int, world_size: int, cfg):
     print(model)
 
     for epoch in range(num_epochs):
+        if _shutdown_requested:
+            rank0_print(f"\n[{rank}] Shutdown requested, exiting training loop")
+            break
+        
         if sampler:
             sampler.set_epoch(epoch)
 
-        if rank == 0:
-            print(f"epoch: {epoch} out of {num_epochs}")
-            print(f"dataset size: {len(dataset)}")
+        rank0_print(f"epoch: {epoch} out of {num_epochs}")
+        rank0_print(f"dataset size: {len(dataset)}")
 
         for i, batch in enumerate(loader):
+            if _shutdown_requested:
+                rank0_print(f"\n[{rank}] Shutdown requested, finishing epoch")
+                break
             if i == 0:
-                print(f"  batch shape: {batch.shape}")
+                rank0_print(f"  batch shape: {batch.shape}")
             save_diff = (
                 cfg.logging.save_volumes and global_step % cfg.logging.viz_every == 0
             )
@@ -386,7 +410,8 @@ def main_worker(rank: int, world_size: int, cfg):
             batch = batch.to(dtype=dtype, device=device, non_blocking=True)
 
             with get_autocast_ctx(cfg, device):
-                recon = model.decoder(model.encoder(batch))
+                raw = model.module if hasattr(model, 'module') else model
+                recon = raw.decoder(raw.encoder(batch))
 
             recon_loss = loss_registry[cfg.objective.loss_fn](recon, batch)
             if perceptual_loss_fn is not None:
@@ -397,8 +422,13 @@ def main_worker(rank: int, world_size: int, cfg):
             detail_dims = (-2, -1)
             detail_loss = finite_difference_loss(recon.float(), batch.float(), dims=detail_dims)
             loss = (recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss)
-            # --- Metircs
-            with main_process_only():
+            # --- backward + step (all ranks must participate for DDP sync)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # --- Metrics / logging (rank 0 only, no DDP-sync ops here)
+            if is_main_process():
                 with torch.no_grad():
                     (
                         loss_value,
@@ -470,35 +500,35 @@ def main_worker(rank: int, world_size: int, cfg):
                     wandb.log(wandb_metrics, step=global_step)
                     if wandb.run is not None and wandb_range_text is not None:
                         wandb.run.summary["raw_input_range_text"] = wandb_range_text
-                if do_validation:
-                    print("Running validation...")
-                    (
-                        val_losses,
-                        val_psnrs,
-                        val_ssims,
-                        val_slice_psnrs,
-                        val_slice_ssims,
-                    ) = [], [], [], [], []
-                    total = len(val_loader)
 
-                    with torch.inference_mode():
-                        model.eval()
-                        for i, batch in enumerate(val_loader):
-                            batch = batch.to(dtype=dtype, device=device, non_blocking=True)
+            # --- Validation (all ranks run forward pass, only rank 0 logs)
+            if do_validation:
+                val_losses, val_psnrs, val_ssims = [], [], []
+                val_slice_psnrs, val_slice_ssims = [], []
+                total = len(val_loader)
 
-                            with get_autocast_ctx(cfg, device):
-                                recon = model.decoder(model.encoder(batch))
-                            loss_value, psnr_value, ssim_value, slice_psnr_value, slice_ssim_value = evaluate(recon, batch, loss)
+                with torch.inference_mode():
+                    model.eval()
+                    for vi, val_batch in enumerate(val_loader):
+                        val_batch = val_batch.to(dtype=dtype, device=device, non_blocking=True)
 
-                            val_losses.append(loss_value)
-                            val_psnrs.append(psnr_value)
-                            val_ssims.append(ssim_value)
-                            val_slice_psnrs.append(slice_psnr_value)
-                            val_slice_ssims.append(slice_ssim_value)
+                        with get_autocast_ctx(cfg, device):
+                            raw = model.module if hasattr(model, 'module') else model
+                            val_recon = raw.decoder(raw.encoder(val_batch))
+                        vl, vp, vs, vsp, vss = evaluate(val_recon, val_batch, loss)
 
-                            print(f"\rValidation [{i + 1}/{total}]", end="")
+                        val_losses.append(vl)
+                        val_psnrs.append(vp)
+                        val_ssims.append(vs)
+                        val_slice_psnrs.append(vsp)
+                        val_slice_ssims.append(vss)
+
+                        if is_main_process():
+                            print(f"\rValidation [{vi + 1}/{total}]", end="")
+                model.train()
+
+                if is_main_process():
                     print()
-
                     val_loss = torch.tensor(val_losses).mean().item()
                     val_psnr = torch.tensor(val_psnrs).mean().item()
                     val_ssim = torch.tensor(val_ssims).mean().item()
@@ -520,28 +550,37 @@ def main_worker(rank: int, world_size: int, cfg):
                             },
                             step=global_step,
                         )
-                if save_ckpt:
-                    save_checkpoint(
-                        cfg,
-                        model,
-                        optimizer,
-                        cfg.paths.checkpoint_dir,
-                        global_step,
-                        checkpoint_queue,
-                        cfg.training.max_checkpoints,
-                    )
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            # --- Checkpointing (rank 0 only, no DDP-sync ops)
+            if save_ckpt and is_main_process():
+                save_checkpoint(
+                    cfg,
+                    model,
+                    optimizer,
+                    cfg.paths.checkpoint_dir,
+                    global_step,
+                    checkpoint_queue,
+                    cfg.training.max_checkpoints,
+                )
+
             global_step += 1
 
+    # Graceful cleanup on exit
+    rank0_print(f"\n[{rank}] Finalizing training...")
     if use_cuda and world_size > 1:
+        barrier()  # Ensure all processes reach this point
         cleanup()
+    rank0_print(f"[{rank}] Training completed")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--experiment",
+        type=str,
+        default=None,
+        help="Name of experiment config in configs/experiments/ (e.g. dc-ae-f32c32-in-1.0_3d-shallow)",
+    )
     parser.add_argument(
         "--config",
         type=str,
@@ -550,13 +589,27 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
+    cfg = load_config(yaml_path=args.config, experiment=args.experiment)
 
     use_cuda = torch.cuda.is_available()
     world_size = torch.cuda.device_count() if use_cuda else 1
 
     if use_cuda and world_size > 1:
+        import socket
         import torch.multiprocessing as mp
+
+        # Pick a free port from the user's assigned cluster range before spawn
+        if 'MASTER_PORT' not in os.environ:
+            for port in [8972, 8973, 8974, 8975]:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    try:
+                        s.bind(('', port))
+                        os.environ['MASTER_PORT'] = str(port)
+                        break
+                    except OSError:
+                        continue
+            else:
+                raise RuntimeError("No free port in assigned range [8972-8975]")
 
         mp.spawn(main_worker, args=(world_size, cfg), nprocs=world_size, join=True)
     else:

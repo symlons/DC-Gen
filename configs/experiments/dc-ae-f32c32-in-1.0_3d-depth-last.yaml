@@ -1,0 +1,15 @@
+dims: "3d"
+
+model:
+  name: "dc-ae-f32c32-in-1.0_3d-depth-last"
+
+paths:
+  hdf_path: "/data/ct_rate_train_batch_0_v13.hdf"
+  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v02"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v02"
+
+training:
+  batch_size: 2
+
+hparams:
+  learning_rate: 2e-5
