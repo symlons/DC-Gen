@@ -8,6 +8,8 @@ import subprocess
 import sys
 import sysconfig
 from collections import deque
+from monai.data import set_track_meta
+set_track_meta(False)
 
 # Ensure Python dev headers are discoverable for Triton/torch.compile
 _python_include = sysconfig.get_path("include")
