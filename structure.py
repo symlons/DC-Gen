@@ -426,6 +426,8 @@ def main_worker(rank: int, world_size: int, cfg):
     else:
         sampler = None
 
+    mp_context = "fork" if use_cuda and world_size > 1 else None
+
     loader = DataLoader(
         dataset,
         batch_size=cfg.training.batch_size,
@@ -435,6 +437,7 @@ def main_worker(rank: int, world_size: int, cfg):
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=sampler,
         persistent_workers=num_workers > 0,
+        multiprocessing_context=mp_context,
     )
 
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False) if use_cuda and world_size > 1 else None
@@ -448,6 +451,7 @@ def main_worker(rank: int, world_size: int, cfg):
         sampler=val_sampler,
         collate_fn=collate_fn_skip_none,
         persistent_workers=num_workers > 0,
+        multiprocessing_context=mp_context,
     )
 
     rank0_print("[setup] Loading model...")
@@ -533,6 +537,18 @@ def main_worker(rank: int, world_size: int, cfg):
             except Exception as e:
                 print(f"[WARNING] Failed to log model architecture to wandb: {e}")
 
+    import time as _tm
+    rank0_print("[setup] Warming up dataloader workers...")
+    _warmup_t = _tm.time()
+    _train_iter = iter(loader)
+    _warmup_batch = next(_train_iter)
+    rank0_print(f"[setup] Train loader warm: {_tm.time()-_warmup_t:.2f}s")
+    _warmup_t = _tm.time()
+    _val_iter = iter(val_loader)
+    _warmup_batch_val = next(_val_iter)
+    rank0_print(f"[setup] Val loader warm: {_tm.time()-_warmup_t:.2f}s")
+    del _train_iter, _val_iter, _warmup_batch, _warmup_batch_val
+
     rank0_print(f"[setup] Starting training loop (global_step={global_step})...")
     for epoch in range(num_epochs):
         if _shutdown_requested:
@@ -564,6 +580,7 @@ def main_worker(rank: int, world_size: int, cfg):
                 break
             if i == 0:
                 rank0_print(f"  batch shape: {batch.shape}")
+                import time as _tm
             save_diff = (
                 cfg.logging.save_volumes and global_step % cfg.logging.viz_every == 0
             )
@@ -577,13 +594,18 @@ def main_worker(rank: int, world_size: int, cfg):
             if clip_transform is not None:
                 raw_batch_range = clip_transform.pop_batch_ranges(len(batch))
 
+            if i < 2: _t0 = _tm.time()
             batch = batch.to(dtype=dtype, device=device, non_blocking=True)
             if hasattr(batch, "as_tensor"):
                 batch = batch.as_tensor()
+            if i < 2: rank0_print(f"  Iter {i}: to_device {_tm.time()-_t0:.2f}s")
 
+            if i < 2: _t0 = _tm.time()
             with get_autocast_ctx(cfg, device):
                 recon = model(batch)
+            if i < 2: rank0_print(f"  Iter {i}: forward {_tm.time()-_t0:.2f}s")
 
+            if i < 2: _t0 = _tm.time()
             recon_loss = loss_registry[cfg.objective.loss_fn](recon, batch)
             if perceptual_loss_fn is not None:
                 perc_loss = perceptual_loss_fn(recon.float(), batch.float())
@@ -593,10 +615,14 @@ def main_worker(rank: int, world_size: int, cfg):
             detail_dims = (-2, -1)
             detail_loss = finite_difference_loss(recon.float(), batch.float(), dims=detail_dims)
             loss = (recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss)
+            if i < 2: rank0_print(f"  Iter {i}: losses {_tm.time()-_t0:.2f}s")
+            
+            if i < 2: _t0 = _tm.time()
             # --- backward + step (all ranks must participate for DDP sync)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if i < 2: rank0_print(f"  Iter {i}: backward {_tm.time()-_t0:.2f}s")
 
             # --- Metrics / logging (rank 0 only, no DDP-sync ops here)
             if is_main_process():
@@ -675,67 +701,70 @@ def main_worker(rank: int, world_size: int, cfg):
 
             # --- Validation (all ranks must participate for aggregate_metrics)
             if do_validation:
-               barrier()
-               rank0_print(f"\n[val] Starting validation at step {global_step}...")
-               sys.stdout.flush()
-               val_psnrs, val_ssims = [], []
-               val_slice_psnrs, val_slice_ssims = [], []
-               val_max = cfg.logging.val_max_batches
-               total = min(len(val_loader), val_max) if val_max else len(val_loader)
+                _tv = _tm.time()
+                barrier()
+                rank0_print(f"\n[val] Starting validation at step {global_step}... (barrier {_tm.time()-_tv:.2f}s)")
+                sys.stdout.flush()
+                val_psnrs, val_ssims = [], []
+                val_slice_psnrs, val_slice_ssims = [], []
+                val_max = cfg.logging.val_max_batches
+                total = min(len(val_loader), val_max) if val_max else len(val_loader)
 
-               raw_model = model.module if hasattr(model, "module") else model
+                raw_model = model.module if hasattr(model, "module") else model
 
-               with torch.inference_mode():
-                   raw_model.eval()
-                   for vi, val_batch in enumerate(val_loader):
-                       if val_batch is None:
-                           continue
-                       if val_max and vi >= val_max:
-                           break
-                       val_batch = val_batch.to(dtype=dtype, device=device, non_blocking=True)
+                with torch.inference_mode():
+                    raw_model.eval()
+                    _tv_loop = _tm.time()
+                    for vi, val_batch in enumerate(val_loader):
+                        if vi == 0: rank0_print(f"  [val] First batch: {_tm.time()-_tv_loop:.2f}s")
+                        if val_batch is None:
+                            continue
+                        if val_max and vi >= val_max:
+                            break
+                        val_batch = val_batch.to(dtype=dtype, device=device, non_blocking=True)
 
-                       with get_autocast_ctx(cfg, device):
-                           val_recon = raw_model(val_batch)
-                       _, vp, vs, vsp, vss = evaluate(val_recon, val_batch, None)
+                        with get_autocast_ctx(cfg, device):
+                            val_recon = raw_model(val_batch)
+                        _, vp, vs, vsp, vss = evaluate(val_recon, val_batch, None)
 
-                       val_psnrs.append(vp)
-                       val_ssims.append(vs)
-                       val_slice_psnrs.append(vsp)
-                       val_slice_ssims.append(vss)
+                        val_psnrs.append(vp)
+                        val_ssims.append(vs)
+                        val_slice_psnrs.append(vsp)
+                        val_slice_ssims.append(vss)
 
-                       if is_main_process():
-                           print(f"\rValidation [{vi + 1}/{total}]", end="", flush=True)
-                   raw_model.train()
+                        if is_main_process():
+                            print(f"\rValidation [{vi + 1}/{total}]", end="", flush=True)
+                    raw_model.train()
 
-               val_metrics = aggregate_metrics(
-                   {
-                       "val_psnr": torch.tensor(val_psnrs).mean().item() if val_psnrs else 0.0,
-                       "val_ssim": torch.tensor(val_ssims).mean().item() if val_ssims else 0.0,
-                       "val_slice_psnr": torch.tensor(val_slice_psnrs).mean().item() if val_slice_psnrs else 0.0,
-                       "val_slice_ssim": torch.tensor(val_slice_ssims).mean().item() if val_slice_ssims else 0.0,
-                   },
-                   device,
-               )
+                    val_metrics = aggregate_metrics(
+                    {
+                        "val_psnr": torch.tensor(val_psnrs).mean().item() if val_psnrs else 0.0,
+                        "val_ssim": torch.tensor(val_ssims).mean().item() if val_ssims else 0.0,
+                        "val_slice_psnr": torch.tensor(val_slice_psnrs).mean().item() if val_slice_psnrs else 0.0,
+                        "val_slice_ssim": torch.tensor(val_slice_ssims).mean().item() if val_slice_ssims else 0.0,
+                    },
+                    device,
+                    )
 
-               if is_main_process():
-                   print()
-                   print(
-                       f"Validation PSNR: {val_metrics['val_psnr']:.6f}, SSIM: {val_metrics['val_ssim']:.6f}, "
-                       f"Slice PSNR: {val_metrics['val_slice_psnr']:.6f}, Slice SSIM: {val_metrics['val_slice_ssim']:.6f}"
-                   )
+                    if is_main_process():
+                        print()
+                        print(
+                            f"Validation PSNR: {val_metrics['val_psnr']:.6f}, SSIM: {val_metrics['val_ssim']:.6f}, "
+                            f"Slice PSNR: {val_metrics['val_slice_psnr']:.6f}, Slice SSIM: {val_metrics['val_slice_ssim']:.6f}"
+                        )
 
-                   if log_metrics:
-                       wandb.log(
-                           {
-                               "val_metrics/psnr": val_metrics["val_psnr"],
-                               "val_metrics/ssim": val_metrics["val_ssim"],
-                               "val_metrics/slice_psnr": val_metrics["val_slice_psnr"],
-                               "val_metrics/slice_ssim": val_metrics["val_slice_ssim"],
-                               "epoch": epoch,
-                           },
-                           step=global_step,
-                       )
-               rank0_print(f"[val] Validation complete at step {global_step}")
+                        if log_metrics:
+                            wandb.log(
+                                {
+                                    "val_metrics/psnr": val_metrics["val_psnr"],
+                                    "val_metrics/ssim": val_metrics["val_ssim"],
+                                    "val_metrics/slice_psnr": val_metrics["val_slice_psnr"],
+                                    "val_metrics/slice_ssim": val_metrics["val_slice_ssim"],
+                                    "epoch": epoch,
+                                },
+                                step=global_step,
+                            )
+                    rank0_print(f"[val] Validation complete at step {global_step}")
 
             # --- Checkpointing (rank 0 only, no DDP-sync ops)
             if save_ckpt and is_main_process():

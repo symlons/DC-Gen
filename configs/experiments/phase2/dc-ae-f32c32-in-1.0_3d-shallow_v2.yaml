@@ -8,8 +8,8 @@ model:
   compile: True
 
 paths:
-  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase2"
-  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase2"
+  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase2_v2"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase2_v2"
 
 training:
   batch_size: 2
@@ -21,7 +21,8 @@ pipeline:
     resize_hw: [512, 512]
 
 hparams:
-  learning_rate: 2e-5
+  learning_rate: 1e-5
+  weight_decay: 1e-3
 
 logging:
   wandb: True

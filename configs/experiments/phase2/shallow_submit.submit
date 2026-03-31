@@ -34,7 +34,7 @@ handle_signal() {
   scontrol requeue $SLURM_JOB_ID
   exit 0
 }
-#trap 'handle_signal' USR1
+trap 'handle_signal' USR1
 
 # --------------------------------------------------------------------------------------
 # info
@@ -55,6 +55,6 @@ source /cluster/home/kostfab1/dev/bin/activate
 # --------------------------------------------------------------------------------------
 # run
 # --------------------------------------------------------------------------------------
-python3 structure.py --experiment dc-ae-f32c32-in-1.0_3d-shallow &
+python3 structure.py --experiment phase2/dc-ae-f32c32-in-1.0_3d-shallow_v2 &
 child_pid=$!
 wait $child_pid

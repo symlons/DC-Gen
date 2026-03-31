@@ -908,6 +908,17 @@ def dc_ae_f64c128(name: str, pretrained_path: Optional[str] = None) -> DCAEConfi
             "decoder.width_list=[128,256,512,512,1024,1024,2048] decoder.depth_list=[0,5,10,2,2,2,2] "
             "decoder.norm=[bn2d,bn2d,bn2d,rms2d,rms2d,rms2d,rms2d] decoder.act=[relu,relu,relu,silu,silu,silu,silu]"
         )
+    elif name in ["dc-ae-f64c128-in-1.0_shallow_3d"]:
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=128 "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024,2048] encoder.depth_list=[1,1,1,1,1,1,1] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024,2048] decoder.depth_list=[1,1,1,1,1,1,1] "
+            "decoder.norm=rms2d decoder.act=silu"
+        )
     else:
         raise NotImplementedError
     cfg = OmegaConf.from_dotlist(cfg_str.split(" "))
