@@ -47,6 +47,7 @@ from multigpu import (
 )
 from registry import dataset_registry, loss_registry
 from viz import Visualize
+from gan_loss import LocalPatchGAN
 
 # Global flag for graceful shutdown
 _shutdown_requested = False
@@ -241,6 +242,12 @@ def print_config_summary(cfg, device):
     print(f"  Loss         : {cfg.objective.loss_fn}")
     print(f"  Perc Weight  : {cfg.objective.perceptual_weight}")
     print(f"  Detail Weight: {cfg.objective.detail_weight}")
+    print(f"  GAN Enable   : {cfg.objective.gan_enable}")
+    if cfg.objective.gan_enable:
+        print(f"  GAN Weight   : {cfg.objective.gan_weight}")
+        print(f"  GAN Loss Type: {cfg.objective.gan_loss_type}")
+        print(f"  GAN Patch    : {cfg.objective.gan_patch_size}")
+        print(f"  GAN Disc D   : {cfg.objective.gan_discriminator_steps}")
     print(f"  WandB        : {cfg.logging.wandb}")
     print(f"  Viz Every    : {cfg.logging.viz_every}")
     print(f"  Validate Every: {cfg.logging.validate_every}")
@@ -477,6 +484,24 @@ def main_worker(rank: int, world_size: int, cfg):
 
     os.makedirs(cfg.paths.save_dir, exist_ok=True)
     viz = Visualize(viz_type=cfg.dims)
+    
+    # Initialize GAN if enabled
+    gan_module = None
+    discriminator_optimizer = None
+    if cfg.objective.gan_enable and cfg.objective.gan_weight > 0:
+        gan_module = LocalPatchGAN(
+            in_channels=1,
+            patch_size=tuple(cfg.objective.gan_patch_size),
+            ndf=cfg.objective.gan_ndf,
+            loss_type=cfg.objective.gan_loss_type,
+        ).to(device)
+        discriminator_optimizer = torch.optim.Adam(
+            gan_module.discriminator.parameters(),
+            lr=cfg.hparams.learning_rate * 0.1,  # Lower LR for discriminator
+            betas=(0.5, 0.999),
+        )
+        rank0_print(f"[GAN] Initialized patch discriminator on {device}")
+    
     optimizer = torch.optim.AdamW(
         param_groups,
         lr=cfg.hparams.learning_rate,
@@ -593,7 +618,21 @@ def main_worker(rank: int, world_size: int, cfg):
 
             detail_dims = (-2, -1)
             detail_loss = finite_difference_loss(recon.float(), batch.float(), dims=detail_dims)
-            loss = (recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss)
+            
+            gan_loss = recon_loss.new_zeros(())
+            
+            # Discriminator update (multiple steps per generator update)
+            if gan_module is not None and global_step % (cfg.objective.gan_discriminator_steps + 1) != 0:
+                discriminator_optimizer.zero_grad()
+                gan_loss = gan_module.compute_discriminator_loss(batch.float(), recon.detach().float())
+                gan_loss.backward()
+                discriminator_optimizer.step()
+            
+            # Generator update with adversarial loss
+            if gan_module is not None and global_step % (cfg.objective.gan_discriminator_steps + 1) == 0:
+                gan_loss = gan_module.compute_generator_loss(batch.float(), recon.float())
+            
+            loss = (recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss + cfg.objective.gan_weight * gan_loss)
             # --- backward + step (all ranks must participate for DDP sync)
             optimizer.zero_grad()
             loss.backward()
@@ -656,16 +695,17 @@ def main_worker(rank: int, world_size: int, cfg):
                 )
                 if log_metrics:
                      wandb_metrics = {
-                         "loss/total": loss.item(),
-                         "loss/recon": recon_loss.item(),
-                         "loss/perceptual": perc_loss.item(),
-                         "loss/detail": detail_loss.item(),
-                         "metrics/psnr": psnr_value,
-                         "metrics/ssim": ssim_value,
-                         "metrics/slice_psnr": slice_psnr_value,
-                         "metrics/slice_ssim": slice_ssim_value,
-                         "epoch": epoch,  # Log epoch with metrics
-                     }
+                          "loss/total": loss.item(),
+                          "loss/recon": recon_loss.item(),
+                          "loss/perceptual": perc_loss.item(),
+                          "loss/detail": detail_loss.item(),
+                          "loss/gan": gan_loss.item(),
+                          "metrics/psnr": psnr_value,
+                          "metrics/ssim": ssim_value,
+                          "metrics/slice_psnr": slice_psnr_value,
+                          "metrics/slice_ssim": slice_ssim_value,
+                          "epoch": epoch,  # Log epoch with metrics
+                      }
                      wandb_metrics.update(tensor_stats_dict("batch", batch))
                      wandb_metrics.update(tensor_stats_dict("recon", recon))
                      wandb.log(wandb_metrics, step=global_step)
