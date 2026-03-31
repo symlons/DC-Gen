@@ -46,6 +46,12 @@ class ObjectiveConfig:
     loss_fn: str = "l1"
     perceptual_weight: float = 0.25
     detail_weight: float = 0.0
+    gan_enable: bool = False
+    gan_weight: float = 0.0
+    gan_loss_type: str = "hinge"
+    gan_patch_size: List[int] = field(default_factory=lambda: [32, 32, 16])
+    gan_ndf: int = 64
+    gan_discriminator_steps: int = 1  # D updates per G update
 
 
 @dataclass
@@ -54,6 +60,7 @@ class TrainingConfig:
     batch_size: int = 4
     shuffle_data: bool = True
     num_workers: int = 32
+    persistent_workers: bool = True
     pin_memory: bool = True
     prefetch_factor: Optional[int] = None
     device: str = ("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))

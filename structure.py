@@ -47,6 +47,7 @@ from multigpu import (
 )
 from registry import dataset_registry, loss_registry
 from viz import Visualize
+from gan_loss import LocalPatchGAN
 
 # Global flag for graceful shutdown
 _shutdown_requested = False
@@ -230,6 +231,7 @@ def print_config_summary(cfg, device):
     print(f"  Epochs       : {cfg.training.num_epochs}")
     print(f"  Batch Size   : {cfg.training.batch_size}")
     print(f"  Num Workers  : {cfg.training.num_workers}")
+    print(f"  Persistent Workers: {cfg.training.persistent_workers}")
     print(f"  DType        : {cfg.training.dtype}")
     print(f"  Autocast     : {cfg.training.use_autocast}")
     print(
@@ -240,6 +242,12 @@ def print_config_summary(cfg, device):
     print(f"  Loss         : {cfg.objective.loss_fn}")
     print(f"  Perc Weight  : {cfg.objective.perceptual_weight}")
     print(f"  Detail Weight: {cfg.objective.detail_weight}")
+    print(f"  GAN Enable   : {cfg.objective.gan_enable}")
+    if cfg.objective.gan_enable:
+        print(f"  GAN Weight   : {cfg.objective.gan_weight}")
+        print(f"  GAN Loss Type: {cfg.objective.gan_loss_type}")
+        print(f"  GAN Patch    : {cfg.objective.gan_patch_size}")
+        print(f"  GAN Disc D   : {cfg.objective.gan_discriminator_steps}")
     print(f"  WandB        : {cfg.logging.wandb}")
     print(f"  Viz Every    : {cfg.logging.viz_every}")
     print(f"  Validate Every: {cfg.logging.validate_every}")
@@ -436,8 +444,12 @@ def main_worker(rank: int, world_size: int, cfg):
         num_workers=num_workers,
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=sampler,
+<<<<<<< HEAD
         persistent_workers=num_workers > 0,
         multiprocessing_context=mp_context,
+=======
+        persistent_workers=num_workers > 0 and cfg.training.persistent_workers,
+>>>>>>> da622c9514097dba832c5e842411ea22cf7f0da6
     )
 
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False) if use_cuda and world_size > 1 else None
@@ -450,8 +462,12 @@ def main_worker(rank: int, world_size: int, cfg):
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=val_sampler,
         collate_fn=collate_fn_skip_none,
+<<<<<<< HEAD
         persistent_workers=num_workers > 0,
         multiprocessing_context=mp_context,
+=======
+        persistent_workers=num_workers > 0 and cfg.training.persistent_workers,
+>>>>>>> da622c9514097dba832c5e842411ea22cf7f0da6
     )
 
     rank0_print("[setup] Loading model...")
@@ -480,6 +496,24 @@ def main_worker(rank: int, world_size: int, cfg):
 
     os.makedirs(cfg.paths.save_dir, exist_ok=True)
     viz = Visualize(viz_type=cfg.dims)
+    
+    # Initialize GAN if enabled
+    gan_module = None
+    discriminator_optimizer = None
+    if cfg.objective.gan_enable and cfg.objective.gan_weight > 0:
+        gan_module = LocalPatchGAN(
+            in_channels=1,
+            patch_size=tuple(cfg.objective.gan_patch_size),
+            ndf=cfg.objective.gan_ndf,
+            loss_type=cfg.objective.gan_loss_type,
+        ).to(device)
+        discriminator_optimizer = torch.optim.Adam(
+            gan_module.discriminator.parameters(),
+            lr=cfg.hparams.learning_rate * 0.1,  # Lower LR for discriminator
+            betas=(0.5, 0.999),
+        )
+        rank0_print(f"[GAN] Initialized patch discriminator on {device}")
+    
     optimizer = torch.optim.AdamW(
         param_groups,
         lr=cfg.hparams.learning_rate,
@@ -614,9 +648,24 @@ def main_worker(rank: int, world_size: int, cfg):
 
             detail_dims = (-2, -1)
             detail_loss = finite_difference_loss(recon.float(), batch.float(), dims=detail_dims)
-            loss = (recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss)
-            if i < 2: rank0_print(f"  Iter {i}: losses {_tm.time()-_t0:.2f}s")
             
+            gan_loss = recon_loss.new_zeros(())
+            
+            if cfg.objective.gan_enable and gan_module is not None:
+                if global_step % (cfg.objective.gan_discriminator_steps + 1) != 0:
+                    discriminator_optimizer.zero_grad()
+                    gan_loss = gan_module.compute_discriminator_loss(batch.float(), recon.detach().float())
+                    gan_loss.backward()
+                    discriminator_optimizer.step()
+                
+                if global_step % (cfg.objective.gan_discriminator_steps + 1) == 0:
+                    gan_loss = gan_module.compute_generator_loss(batch.float(), recon.float())
+            
+            loss = (recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss)
+            if cfg.objective.gan_enable:
+                loss = loss + cfg.objective.gan_weight * gan_loss
+            
+            if i < 2: rank0_print(f"  Iter {i}: losses {_tm.time()-_t0:.2f}s")
             if i < 2: _t0 = _tm.time()
             # --- backward + step (all ranks must participate for DDP sync)
             optimizer.zero_grad()
@@ -679,25 +728,30 @@ def main_worker(rank: int, world_size: int, cfg):
                     f"slice_PSNR={slice_psnr_value:.6f}, slice_SSIM={slice_ssim_value:.6f}"
                     f"{range_text}"
                 )
-                if save_diff:
-                    viz.save(batch, recon, cfg.paths.save_dir, global_step)
                 if log_metrics:
                      wandb_metrics = {
-                         "loss/total": loss.item(),
-                         "loss/recon": recon_loss.item(),
-                         "loss/perceptual": perc_loss.item(),
-                         "loss/detail": detail_loss.item(),
-                         "metrics/psnr": psnr_value,
-                         "metrics/ssim": ssim_value,
-                         "metrics/slice_psnr": slice_psnr_value,
-                         "metrics/slice_ssim": slice_ssim_value,
-                         "epoch": epoch,  # Log epoch with metrics
-                     }
+                          "loss/total": loss.item(),
+                          "loss/recon": recon_loss.item(),
+                          "loss/perceptual": perc_loss.item(),
+                          "loss/detail": detail_loss.item(),
+                          "loss/gan": gan_loss.item(),
+                          "metrics/psnr": psnr_value,
+                          "metrics/ssim": ssim_value,
+                          "metrics/slice_psnr": slice_psnr_value,
+                          "metrics/slice_ssim": slice_ssim_value,
+                          "epoch": epoch,  # Log epoch with metrics
+                      }
                      wandb_metrics.update(tensor_stats_dict("batch", batch))
                      wandb_metrics.update(tensor_stats_dict("recon", recon))
                      wandb.log(wandb_metrics, step=global_step)
                      if wandb.run is not None and wandb_range_text is not None:
                          wandb.run.summary["raw_input_range_text"] = wandb_range_text
+
+            if save_diff:
+                barrier()
+                if is_main_process():
+                    viz.save(batch, recon, cfg.paths.save_dir, global_step)
+                barrier()
 
             # --- Validation (all ranks must participate for aggregate_metrics)
             if do_validation:
@@ -767,16 +821,19 @@ def main_worker(rank: int, world_size: int, cfg):
                     rank0_print(f"[val] Validation complete at step {global_step}")
 
             # --- Checkpointing (rank 0 only, no DDP-sync ops)
-            if save_ckpt and is_main_process():
-                save_checkpoint(
-                    cfg,
-                    model,
-                    optimizer,
-                    cfg.paths.checkpoint_dir,
-                    global_step,
-                    checkpoint_queue,
-                    cfg.training.max_checkpoints,
-                )
+            if save_ckpt:
+                barrier()
+                if is_main_process():
+                    save_checkpoint(
+                        cfg,
+                        model,
+                        optimizer,
+                        cfg.paths.checkpoint_dir,
+                        global_step,
+                        checkpoint_queue,
+                        cfg.training.max_checkpoints,
+                    )
+                barrier()
 
             global_step += 1
 

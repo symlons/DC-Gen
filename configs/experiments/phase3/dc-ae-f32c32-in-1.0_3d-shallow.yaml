@@ -1,0 +1,36 @@
+dims: "3d"
+
+experiment:
+  name: "shallow-v4-experiment"
+
+model:
+  name: "dc-ae-f32c32-in-1.0_3d-shallow"
+
+paths:
+  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase3"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-Gen/checkpoints/checkpoints_v04_shallow_phase3"
+
+training:
+  batch_size: 8
+  trainable_ae_params:
+    - ["decoder.project_out.*"]
+
+objective:
+  gan_enable: true
+  gan_weight: 0.1
+  gan_loss_type: hinge
+  gan_patch_size: [32, 32, 16]
+  gan_discriminator_steps: 1
+
+pipeline:
+    resize_hw: [256, 256]
+
+hparams:
+  learning_rate: 2e-5
+
+logging:
+  wandb: True
+  wandb_resume_run: True
+  save_volumes: True
+  viz_every: 1000
+  validate_every: 10000
