@@ -437,20 +437,16 @@ def main_worker(rank: int, world_size: int, cfg):
     mp_context = "fork" if use_cuda and world_size > 1 else None
 
     loader = DataLoader(
-        dataset,
-        batch_size=cfg.training.batch_size,
-        shuffle=(sampler is None and cfg.training.shuffle_data),
-        pin_memory=cfg.training.pin_memory,
-        num_workers=num_workers,
-        prefetch_factor=cfg.training.prefetch_factor,
-        sampler=sampler,
-<<<<<<< HEAD
-        persistent_workers=num_workers > 0,
-        multiprocessing_context=mp_context,
-=======
-        persistent_workers=num_workers > 0 and cfg.training.persistent_workers,
->>>>>>> da622c9514097dba832c5e842411ea22cf7f0da6
-    )
+         dataset,
+         batch_size=cfg.training.batch_size,
+         shuffle=(sampler is None and cfg.training.shuffle_data),
+         pin_memory=cfg.training.pin_memory,
+         num_workers=num_workers,
+         prefetch_factor=cfg.training.prefetch_factor,
+         sampler=sampler,
+         persistent_workers=num_workers > 0,
+         multiprocessing_context=mp_context,
+         )
 
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False) if use_cuda and world_size > 1 else None
     val_loader = DataLoader(
@@ -462,12 +458,8 @@ def main_worker(rank: int, world_size: int, cfg):
         prefetch_factor=cfg.training.prefetch_factor,
         sampler=val_sampler,
         collate_fn=collate_fn_skip_none,
-<<<<<<< HEAD
         persistent_workers=num_workers > 0,
         multiprocessing_context=mp_context,
-=======
-        persistent_workers=num_workers > 0 and cfg.training.persistent_workers,
->>>>>>> da622c9514097dba832c5e842411ea22cf7f0da6
     )
 
     rank0_print("[setup] Loading model...")
@@ -654,8 +646,8 @@ def main_worker(rank: int, world_size: int, cfg):
             if cfg.objective.gan_enable and gan_module is not None:
                 if global_step % (cfg.objective.gan_discriminator_steps + 1) != 0:
                     discriminator_optimizer.zero_grad()
-                    gan_loss = gan_module.compute_discriminator_loss(batch.float(), recon.detach().float())
-                    gan_loss.backward()
+                    d_loss = gan_module.compute_discriminator_loss(batch.float(), recon.detach().float())
+                    d_loss.backward()
                     discriminator_optimizer.step()
                 
                 if global_step % (cfg.objective.gan_discriminator_steps + 1) == 0:
