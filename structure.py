@@ -499,9 +499,10 @@ def main_worker(rank: int, world_size: int, cfg):
             ndf=cfg.objective.gan_ndf,
             loss_type=cfg.objective.gan_loss_type,
         ).to(device)
+        disc_lr = cfg.hparams.discriminator_learning_rate or (cfg.hparams.learning_rate * 0.1)
         discriminator_optimizer = torch.optim.Adam(
             gan_module.discriminator.parameters(),
-            lr=cfg.hparams.learning_rate * 0.1,  # Lower LR for discriminator
+            lr=disc_lr,
             betas=(0.5, 0.999),
         )
         rank0_print(f"[GAN] Initialized patch discriminator on {device}")
@@ -662,6 +663,7 @@ def main_worker(rank: int, world_size: int, cfg):
             # --- backward + step (all ranks must participate for DDP sync)
             optimizer.zero_grad()
             loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf'))
             optimizer.step()
             if i < 2: rank0_print(f"  Iter {i}: backward {_tm.time()-_t0:.2f}s")
 
@@ -731,6 +733,7 @@ def main_worker(rank: int, world_size: int, cfg):
                           "metrics/ssim": ssim_value,
                           "metrics/slice_psnr": slice_psnr_value,
                           "metrics/slice_ssim": slice_ssim_value,
+                          "grad_norm": grad_norm,
                           "epoch": epoch,  # Log epoch with metrics
                       }
                      wandb_metrics.update(tensor_stats_dict("batch", batch))

@@ -12,25 +12,27 @@ paths:
 
 training:
   batch_size: 2
+  load_optimizer_state: false
   trainable_ae_params:
-    - ["decoder.project_out.*"]
+    - ["decoder.*"]
 
 objective:
   gan_enable: true
-  gan_weight: 0.1
+  gan_weight: 0.6
   gan_loss_type: hinge
-  gan_patch_size: [32, 32, 16]
-  gan_discriminator_steps: 1
+  gan_patch_size: [64, 64, 16]
+  gan_discriminator_steps: 4
 
 pipeline:
     resize_hw: [256, 256]
 
 hparams:
-  learning_rate: 2e-5
+  learning_rate: 1e-6
+  discriminator_learning_rate: 4e-6
 
 logging:
   wandb: False
   wandb_resume_run: True
   save_volumes: True
   viz_every: 1000
-  validate_every: 10000
+  validate_every: 2500

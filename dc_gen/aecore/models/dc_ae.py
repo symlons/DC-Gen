@@ -926,6 +926,55 @@ def dc_ae_f64c128(name: str, pretrained_path: Optional[str] = None) -> DCAEConfi
     cfg.pretrained_path = pretrained_path
     return cfg
 
+def dc_ae_f32c128(name: str, pretrained_path: Optional[str] = None) -> DCAEConfig:
+    if name in ["dc-ae-f32c128-in-1.0_shallow_3d"]:
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=128 "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.norm=rms2d decoder.act=silu"
+        )
+    elif name in ["dc-ae-f32c128-in-1.0_deep_3d"]:
+            cfg_str = (
+                "dims=3d "
+                "in_channels=1 "
+                "latent_channels=128 "
+                "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+                "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[3,3,3,5,5,5] "
+                "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+                "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[5,5,5,5,5,5] "
+                "decoder.norm=rms2d decoder.act=silu"
+            )
+    else:
+        raise NotImplementedError
+    cfg = OmegaConf.from_dotlist(cfg_str.split(" "))
+    cfg: DCAEConfig = OmegaConf.to_object(OmegaConf.merge(OmegaConf.structured(DCAEConfig), cfg))
+    cfg.pretrained_path = pretrained_path
+    return cfg
+
+def dc_ae_f32c256(name: str, pretrained_path: Optional[str] = None) -> DCAEConfig:
+    if name in ["dc-ae-f32c256-in-1.0_shallow_3d"]:
+        cfg_str = (
+            "dims=3d "
+            "in_channels=1 "
+            "latent_channels=256 "
+            "encoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "encoder.width_list=[128,256,512,512,1024,1024] encoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.block_type=[ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D,ResBlock3D] "
+            "decoder.width_list=[128,256,512,512,1024,1024] decoder.depth_list=[1,1,1,1,1,1] "
+            "decoder.norm=rms2d decoder.act=silu"
+        )
+    else:
+        raise NotImplementedError
+    cfg = OmegaConf.from_dotlist(cfg_str.split(" "))
+    cfg: DCAEConfig = OmegaConf.to_object(OmegaConf.merge(OmegaConf.structured(DCAEConfig), cfg))
+    cfg.pretrained_path = pretrained_path
+    return cfg
+
 
 def dc_ae_f128c512(name: str, pretrained_path: Optional[str] = None) -> DCAEConfig:
     if name in ["dc-ae-f128c512-in-1.0", "dc-ae-f128c512-mix-1.0"]:
