@@ -472,7 +472,7 @@ def main_worker(rank: int, world_size: int, cfg):
         rank0_print("[setup] Compiling model with torch.compile...")
         model = torch.compile(model)
     if use_cuda and world_size > 1:
-        model = wrap_ddp(model, device)
+        model = wrap_ddp(model)
     model.train()
     rank0_print("[setup] Model ready.")
 
@@ -791,8 +791,7 @@ def main_worker(rank: int, world_size: int, cfg):
                         "val_ssim": torch.tensor(val_ssims).mean().item() if val_ssims else 0.0,
                         "val_slice_psnr": torch.tensor(val_slice_psnrs).mean().item() if val_slice_psnrs else 0.0,
                         "val_slice_ssim": torch.tensor(val_slice_ssims).mean().item() if val_slice_ssims else 0.0,
-                    },
-                    device,
+                    }
                     )
 
                     if is_main_process():
@@ -843,6 +842,9 @@ def main_worker(rank: int, world_size: int, cfg):
 
     if use_cuda and world_size > 1:
         barrier()  # Ensure all processes reach this point
+
+    if use_cuda and world_size > 1:
+        cleanup()
 
     rank0_print(f"[{rank}] Training completed")
 

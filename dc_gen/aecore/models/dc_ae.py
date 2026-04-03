@@ -718,7 +718,15 @@ class DCAE(BaseAE):
 
     def load_model(self):
         if self.cfg.pretrained_source == "dc-ae":
-            state_dict = torch.load(self.cfg.pretrained_path, map_location="cpu", weights_only=True)["state_dict"]
+            ckpt = torch.load(self.cfg.pretrained_path, map_location="cpu", weights_only=True)
+
+            if "state_dict" in ckpt:
+                state_dict = ckpt["state_dict"]
+            elif "model_state_dict" in ckpt:
+                state_dict = ckpt["model_state_dict"]
+            else:
+                state_dict = ckpt
+
             self.encoder.load_state_dict(get_submodule_weights(state_dict, "encoder."))
             self.decoder.load_state_dict(get_submodule_weights(state_dict, "decoder."))
         else:

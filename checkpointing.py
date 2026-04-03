@@ -108,4 +108,5 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
     print(f"Resumed from checkpoint {ckpt_path} at global_step {global_step}")
     if wandb_run_id:
         print(f"WandB run ID: {wandb_run_id}")
+    global_step += 1
     return global_step, wandb_run_id
