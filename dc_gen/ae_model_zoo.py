@@ -30,6 +30,8 @@ from .aecore.models.dc_ae import (
     dc_ae_f64_1_5,
     dc_ae_f64c128,
     dc_ae_f128c512,
+    dc_ae_f32c128,
+    dc_ae_f32c256,
 )
 from .aecore.models.sd_vae import sd_vae_f8, sd_vae_f16, sd_vae_f32
 
@@ -46,6 +48,12 @@ REGISTERED_DCAE_MODEL: dict[str, tuple[Callable, Optional[str], Optional[str]]] 
     "dc-ae-f128c512-in-1.0": (dc_ae_f128c512, None, "mit-han-lab"),
     ## custom f64c128
     "dc-ae-f64c128-in-1.0_shallow_3d": (dc_ae_f64c128, None, "mit-han-lab"),
+
+    #custom f32c128
+    "dc-ae-f32c128-in-1.0_shallow_3d": (dc_ae_f32c128, None, "mit-han-lab"),
+    "dc-ae-f32c128-in-1.0_deep_3d": (dc_ae_f32c128, None, "mit-han-lab"),
+    #custom f32c256
+    "dc-ae-f32c256-in-1.0_shallow_3d": (dc_ae_f32c256, None, "mit-han-lab"),
     #################################################################################################
     "dc-ae-f32c32-mix-1.0": (dc_ae_f32c32, None, "mit-han-lab"),
     "dc-ae-f64c128-mix-1.0": (dc_ae_f64c128, None, "mit-han-lab"),

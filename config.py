@@ -67,6 +67,7 @@ class TrainingConfig:
     dtype: str = "float32"
     autocast_dtype: str = "auto"
     resume_from_checkpoint: bool = True
+    load_optimizer_state: bool = True
     checkpoint_every: int = 1000
     max_checkpoints: int = 4
     use_autocast: bool = True
@@ -76,6 +77,7 @@ class TrainingConfig:
 @dataclass
 class HParamsConfig:
     learning_rate: float = 2e-5
+    discriminator_learning_rate: Optional[float] = None
     weight_decay: float = 1e-1
 
 

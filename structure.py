@@ -395,6 +395,8 @@ def main_worker(rank: int, world_size: int, cfg):
         if use_cuda
         else "cpu"
     )
+    if use_cuda:
+        torch.cuda.set_device(rank)
     if use_cuda and world_size > 1:
         init_distributed(rank, world_size)
 
@@ -472,7 +474,7 @@ def main_worker(rank: int, world_size: int, cfg):
         rank0_print("[setup] Compiling model with torch.compile...")
         model = torch.compile(model)
     if use_cuda and world_size > 1:
-        model = wrap_ddp(model, device)
+        model = wrap_ddp(model)
     model.train()
     rank0_print("[setup] Model ready.")
 
@@ -499,9 +501,10 @@ def main_worker(rank: int, world_size: int, cfg):
             ndf=cfg.objective.gan_ndf,
             loss_type=cfg.objective.gan_loss_type,
         ).to(device)
+        disc_lr = cfg.hparams.discriminator_learning_rate or (cfg.hparams.learning_rate * 0.1)
         discriminator_optimizer = torch.optim.Adam(
             gan_module.discriminator.parameters(),
-            lr=cfg.hparams.learning_rate * 0.1,  # Lower LR for discriminator
+            lr=disc_lr,
             betas=(0.5, 0.999),
         )
         rank0_print(f"[GAN] Initialized patch discriminator on {device}")
@@ -662,6 +665,7 @@ def main_worker(rank: int, world_size: int, cfg):
             # --- backward + step (all ranks must participate for DDP sync)
             optimizer.zero_grad()
             loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf'))
             optimizer.step()
             if i < 2: rank0_print(f"  Iter {i}: backward {_tm.time()-_t0:.2f}s")
 
@@ -731,6 +735,7 @@ def main_worker(rank: int, world_size: int, cfg):
                           "metrics/ssim": ssim_value,
                           "metrics/slice_psnr": slice_psnr_value,
                           "metrics/slice_ssim": slice_ssim_value,
+                          "grad_norm": grad_norm,
                           "epoch": epoch,  # Log epoch with metrics
                       }
                      wandb_metrics.update(tensor_stats_dict("batch", batch))
@@ -788,8 +793,7 @@ def main_worker(rank: int, world_size: int, cfg):
                         "val_ssim": torch.tensor(val_ssims).mean().item() if val_ssims else 0.0,
                         "val_slice_psnr": torch.tensor(val_slice_psnrs).mean().item() if val_slice_psnrs else 0.0,
                         "val_slice_ssim": torch.tensor(val_slice_ssims).mean().item() if val_slice_ssims else 0.0,
-                    },
-                    device,
+                    }
                     )
 
                     if is_main_process():
@@ -840,6 +844,9 @@ def main_worker(rank: int, world_size: int, cfg):
 
     if use_cuda and world_size > 1:
         barrier()  # Ensure all processes reach this point
+
+    if use_cuda and world_size > 1:
+        cleanup()
 
     rank0_print(f"[{rank}] Training completed")
 

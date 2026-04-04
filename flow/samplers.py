@@ -24,6 +24,7 @@ def sample_velocity_model(
     t_end: float = 1.0,
     time_schedule: str = "linear",
     time_schedule_power: float = 2.0,
+    progress_callback=None,
 ) -> torch.Tensor:
     if solver not in SOLVERS:
         raise ValueError(f"Unsupported solver: {solver}")
@@ -40,18 +41,20 @@ def sample_velocity_model(
     )
     batch_size = noise.shape[0]
 
-    for t0, t1 in zip(times[:-1], times[1:]):
+    for step_idx, (t0, t1) in enumerate(zip(times[:-1], times[1:])):
         dt = t1 - t0
         t = torch.full((batch_size,), t0.item(), device=noise.device, dtype=noise.dtype)
         v0 = predict_velocity(model, x, t)
         if solver == "euler":
             x = x + dt * v0
-            continue
-
-        x_euler = x + dt * v0
-        t_next = torch.full((batch_size,), t1.item(), device=noise.device, dtype=noise.dtype)
-        v1 = predict_velocity(model, x_euler, t_next)
-        x = x + dt * 0.5 * (v0 + v1)
+        else:
+            x_euler = x + dt * v0
+            t_next = torch.full((batch_size,), t1.item(), device=noise.device, dtype=noise.dtype)
+            v1 = predict_velocity(model, x_euler, t_next)
+            x = x + dt * 0.5 * (v0 + v1)
+        
+        if progress_callback is not None:
+            progress_callback(step_idx + 1, sample_steps - 1)
 
     return x
 

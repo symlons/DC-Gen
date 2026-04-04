@@ -31,6 +31,7 @@ dependencies = [
     "monai",
     "lpips",
     "triton>=3.6.0",
+    "pandas>=3.0.2",
 ]
 
 [tool.black]

@@ -67,6 +67,8 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
         print("No checkpoints found, starting from scratch")
         return 0, None
 
+    load_optimizer_state = getattr(cfg.training, "load_optimizer_state", True)
+
     try:
         ckpt = torch.load(ckpt_path, map_location=device)
         state_dict = ckpt["model_state_dict"]
@@ -82,14 +84,19 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
             state_dict = {f"_orig_mod.{k}": v for k, v in state_dict.items()}
         
         base_model.load_state_dict(state_dict)
-        try:
-            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        except RuntimeError as e:
-            if "parameter group" in str(e):
-                print(f"[WARNING] Skipped loading optimizer state due to parameter group mismatch: {e}")
-                print("This can happen when trainable parameters change between training phases.")
-            else:
-                raise
+        
+        if load_optimizer_state:
+            try:
+                optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            except (RuntimeError, KeyError, ValueError) as e:
+                if "parameter group" in str(e) or "size mismatch" in str(e) or "The size of tensor" in str(e):
+                    print(f"[WARNING] Skipped loading optimizer state due to shape/parameter mismatch: {e}")
+                    print("Optimizer state will be reinitialized with fresh buffers.")
+                else:
+                    raise
+        else:
+            print("[INFO] Skipped loading optimizer state (load_optimizer_state=False)")
+            
         if ema_model is not None and "ema_state_dict" in ckpt:
             ema_model.load_state_dict(ckpt["ema_state_dict"])
     except Exception as e:
@@ -98,7 +105,12 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
 
     global_step = ckpt.get("global_step", ckpt.get("iteration", 0))
     wandb_run_id = ckpt.get("wandb_run_id", None)
+    
+    if isinstance(global_step, tuple):
+        global_step = global_step[0] if global_step else 0
+    
     print(f"Resumed from checkpoint {ckpt_path} at global_step {global_step}")
     if wandb_run_id:
         print(f"WandB run ID: {wandb_run_id}")
+    global_step += 1
     return global_step, wandb_run_id
