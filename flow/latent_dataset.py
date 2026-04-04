@@ -19,17 +19,11 @@ class LatentTensorDataset(Dataset):
     ):
         self.root_dir = Path(root_dir).expanduser()
         self.extensions = tuple(ext.lower() for ext in extensions)
-        if not self.root_dir.exists():
-            raise FileNotFoundError(f"Latent root dir does not exist: {self.root_dir}")
+        if not self.root_dir.exists(): raise FileNotFoundError(f"Latent root dir does not exist: {self.root_dir}")
 
         pattern = "**/*" if recursive else "*"
-        paths = sorted(
-            path
-            for path in self.root_dir.glob(pattern)
-            if path.is_file() and path.suffix.lower() in self.extensions
-        )
-        if not paths:
-            raise ValueError(f"No latent files found under {self.root_dir} with extensions {self.extensions}")
+        paths = sorted(path for path in self.root_dir.glob(pattern) if path.is_file() and path.suffix.lower() in self.extensions)
+        if not paths: raise ValueError(f"No latent files found under {self.root_dir} with extensions {self.extensions}")
 
         if fraction < 1.0:
             rng = np.random.default_rng(seed)
@@ -75,19 +69,12 @@ def infer_latent_shape(
     expected_input_size: Optional[tuple[int, int, int]] = None,
 ) -> tuple[int, tuple[int, int, int]]:
     sample = dataset[0]["image"]
-    if sample.ndim != 4:
-        raise ValueError(f"Expected latent sample [C, D, H, W], got {tuple(sample.shape)}")
+    if sample.ndim != 4: raise ValueError(f"Expected latent sample [C, D, H, W], got {tuple(sample.shape)}")
 
     in_channels = int(sample.shape[0])
     spatial_shape = tuple(int(dim) for dim in sample.shape[1:])
 
-    if expected_in_channels is not None and expected_in_channels != in_channels:
-        raise ValueError(
-            f"Configured model.in_channels={expected_in_channels} does not match latent channels={in_channels}."
-        )
-    if expected_input_size is not None and expected_input_size != spatial_shape:
-        raise ValueError(
-            f"Configured model.input_size={expected_input_size} does not match latent shape={spatial_shape}."
-        )
+    if expected_in_channels is not None and expected_in_channels != in_channels: raise ValueError(f"Configured model.in_channels={expected_in_channels} does not match latent channels={in_channels}.")
+    if expected_input_size is not None and expected_input_size != spatial_shape: raise ValueError(f"Configured model.input_size={expected_input_size} does not match latent shape={spatial_shape}.")
 
     return in_channels, spatial_shape

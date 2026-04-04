@@ -59,3 +59,16 @@ def _format_value(value: object) -> str:
             return f"{value:.3e}"
         return f"{value:.4f}"
     return str(value)
+
+
+def append_log(log_file: Optional[str], *lines: str):
+    if not log_file:
+        return
+    with open(log_file, "a") as f:
+        for line in lines:
+            f.write(line + "\n")
+
+
+def log_rank0(message: str, log_file: Optional[str] = None):
+    rank0_print(message)
+    append_log(log_file, message)

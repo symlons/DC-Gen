@@ -5,6 +5,13 @@ import torch.nn as nn
 
 from .logging_utils import basic_tensor_stats_dict
 
+def get_grad_norm(parameters, clip_norm: Optional[float] = None) -> float:
+    params = [param for param in parameters if param.grad is not None]
+    if not params:
+        return 0.0
+    if clip_norm is not None:
+        return float(clip_grad_norm_(params, clip_norm).item())
+    return float(torch.norm(torch.stack([param.grad.detach().float().norm() for param in params])).item())
 
 def unwrap_model(model: nn.Module) -> nn.Module:
     while hasattr(model, "module") or hasattr(model, "_orig_mod"):

@@ -4,10 +4,11 @@ import os
 import wandb
 import glob
 from contextlib import nullcontext
-
-import numpy as np
+from typing import Optional
 import matplotlib.pyplot as plt
-import torch
+
+from dc_gen.models.utils.network import get_dtype_from_str
+from flow.flow_utils import DTYPE_NAME_MAP
 
 def to_numpy(tensor):
     return tensor.detach().cpu().float().numpy()
@@ -95,3 +96,18 @@ def get_autocast_ctx(cfg, device):
         if autocast_dtype is not None:
             return torch.autocast(device_type=device.type, dtype=autocast_dtype, enabled=True)
     return nullcontext()
+
+
+def resolve_device(rank: int) -> torch.device:
+    use_cuda = torch.cuda.is_available()
+    return torch.device("mps" if torch.backends.mps.is_available() and not use_cuda else f"cuda:{rank}" if use_cuda else "cpu")
+
+def move_batch(batch: dict[str, torch.Tensor], device: torch.device, dtype: torch.dtype) -> dict[str, torch.Tensor]: # todo: uses this for dc-ae training as well
+    return {key: value.to(device=device, dtype=dtype, non_blocking=True) for key, value in batch.items()}
+
+def should_run(step: int, every: Optional[int]) -> bool:
+     return every is not None and step > 0 and step % every == 0
+
+def torch_dtype(name: str) -> torch.dtype:
+     """Convert string dtype name to torch.dtype."""
+     return get_dtype_from_str(DTYPE_NAME_MAP[name])

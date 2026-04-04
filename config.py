@@ -30,7 +30,7 @@ class PipelineConfig:
     n_slices: Optional[int] = 32
     resize_depth: Optional[int] = None
     clip_input_range: Optional[List[float]] = field(default_factory=lambda: [-1000.0, 1000.0])
-    normalize_mode: str = "sample"
+    normalize_mode: str = "fixed"
     normalize_output_range: List[float] = field(default_factory=lambda: [-1.0, 1.0])
     normalize_input_range: Optional[List[float]] = None
 
