@@ -395,6 +395,8 @@ def main_worker(rank: int, world_size: int, cfg):
         if use_cuda
         else "cpu"
     )
+    if use_cuda:
+        torch.cuda.set_device(rank)
     if use_cuda and world_size > 1:
         init_distributed(rank, world_size)
 

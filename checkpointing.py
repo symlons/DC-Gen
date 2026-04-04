@@ -105,6 +105,10 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
 
     global_step = ckpt.get("global_step", ckpt.get("iteration", 0))
     wandb_run_id = ckpt.get("wandb_run_id", None)
+    
+    if isinstance(global_step, tuple):
+        global_step = global_step[0] if global_step else 0
+    
     print(f"Resumed from checkpoint {ckpt_path} at global_step {global_step}")
     if wandb_run_id:
         print(f"WandB run ID: {wandb_run_id}")
