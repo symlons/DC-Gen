@@ -10,7 +10,6 @@ class DatasetConfig:
 
 
 @dataclass
-class PathsConfig:
     hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
     checkpoint_root_dir: str = "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v03"
     checkpoint_dir: Optional[str] = None
