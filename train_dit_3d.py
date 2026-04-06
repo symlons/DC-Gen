@@ -94,7 +94,7 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
     val_dataset = make_dataset(cfg, "val")
     sampler = (DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True if use_ddp else cfg.training.shuffle_data) if use_ddp else None)
     train_loader = make_dataloader(train_dataset, cfg, sampler=sampler, shuffle=not use_ddp and cfg.training.shuffle_data)
-    val_loader = make_dataloader(val_dataset, cfg, batch_size=min(len(val_dataset), max(1, cfg.training.batch_size * 2)))
+    val_loader = make_dataloader(val_dataset, cfg, batch_size=min(len(val_dataset), max(1, cfg.sampling.batch_size)))
     in_channels, spatial_shape = infer_latent_shape(
         train_dataset,
         expected_in_channels=cfg.model.in_channels,
@@ -175,9 +175,12 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
             if should_run(global_step, cfg.logging.validate_every):
                 barrier()
                 if is_main_process() and val_loader is not None:
+                    autoencoder.to(device)
                     val_metrics = run_validation(eval_model, val_loader, objective, cfg, device, model_dtype, autoencoder)
                     log_rank0(f"[val] {format_step_log(global_step, epoch, val_metrics)}", log_file)
                     if cfg.logging.wandb: wandb.log(val_metrics, step=global_step)
+                    autoencoder.to("cpu")
+                    torch.cuda.empty_cache()
                 barrier()
 
             # Sampling
@@ -192,8 +195,11 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
                     import nibabel as nib
 
                     if autoencoder is not None and device is not None:
+                        autoencoder.to(device)
                         with torch.no_grad():
                             recon = autoencoder.decode(x.to(device)).to(x.device)
+                        autoencoder.to("cpu")
+                        torch.cuda.empty_cache()
 
                     for i in range(recon.shape[0]):
                         img = recon[i, 0, recon.shape[2] // 2]

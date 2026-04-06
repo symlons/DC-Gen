@@ -1,7 +1,6 @@
 dims: "3d"
-
 experiment:
-  name: "dit_3d_rectified_flow_phase1"
+  name: "dit_3d_recflow"
 
 dataset:
   train_dir: null
@@ -15,13 +14,11 @@ dataset:
 paths:
   hdf_path: "/data/ct_rate_train_batch_0_v13.hdf"
   checkpoint_root_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase1"
-  checkpoint_dir: null
   save_root_dir: "/cluster/home/kostfab1/DC-Gen/flow_1"
-  save_dir: null
-  nifti_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
-  nifti_val_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
   latent_train_dir: "/cluster/projects/2025_stmd_VT_diff/latents/latents_v04_shallow_phase1_train_v2"
   latent_val_dir: "/cluster/projects/2025_stmd_VT_diff/latents/latents_v04_shallow_phase1_valid_v2"
+  nifti_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
+  nifti_val_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
 
 objective:
   eps: 1e-5
@@ -74,7 +71,7 @@ sampling:
   time_schedule: "linear"
   time_schedule_power: 2.0
   num_samples: 8
-  batch_size: 4
+  batch_size: 16
   sample_every: 1000
   output_dir: null
   save_dtype: "float32"
@@ -84,7 +81,7 @@ sampling:
 logging:
   wandb: true
   wandb_project: "ct_dit_3d_rectified_flow"
-  validate_every: 5000
+  validate_every: 1000
   max_val_batches: null
   save_samples: true
 

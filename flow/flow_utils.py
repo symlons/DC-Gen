@@ -101,7 +101,7 @@ def validate_and_finalize_config(cfg: TrainDiT3DConfig) -> TrainDiT3DConfig:
         cfg.paths.checkpoint_root_dir, "flow_matching", cfg.experiment.name
     )
     cfg.paths.save_dir = cfg.paths.save_dir or os.path.join(
-        cfg.paths.save_root_dir, "flow_matching", cfg.experiment.name
+        cfg.paths.save_root_dir, "flow", cfg.experiment.name
     )
     cfg.dataset.train_dir = cfg.dataset.train_dir or cfg.paths.latent_train_dir
     cfg.dataset.val_dir = cfg.dataset.val_dir or cfg.paths.latent_val_dir
