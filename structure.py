@@ -423,7 +423,12 @@ def main_worker(rank: int, world_size: int, cfg):
             loss = (recon_loss + perceptual_weight * perc_loss + detail_weight * detail_loss)
 
             if cfg.objective.gan_enable: loss = loss + cfg.objective.gan_weight * gan_loss
-            if cfg.objective.ssim_weight > 0: loss = loss + cfg.objective.ssim_weight * loss_registry["ms_ssim"](recon, batch)
+            ssim_loss = loss_registry["ms_ssim"]()
+            B, C, D, H, W = recon.shape
+            recon_2d = recon.permute(0, 2, 1, 3, 4).reshape(B * D, C, H, W)
+            batch_2d = batch.permute(0, 2, 1, 3, 4).reshape(B * D, C, H, W)
+
+            if cfg.objective.ssim_weight > 0: loss = loss + cfg.objective.ssim_weight * ssim_loss(recon_2d.float(), batch_2d.float())
 
             if i < 2: rank0_print(f"  Iter {i}: losses {_tm.time()-_t0:.2f}s")
             if i < 2: _t0 = _tm.time()

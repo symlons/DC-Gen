@@ -7,17 +7,21 @@ model:
   name: "dc-ae-f32c32-in-1.0_3d-shallow"
 
 paths:
-  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase1"
-  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase1"
+  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase1_ssim"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase1_ssim"
 
 training:
   batch_size: 6
 
 pipeline:
     resize_hw: [256, 256]
+    normalize_input_range: [-1, 1]
 
 hparams:
   learning_rate: 2e-5
+
+objective:
+  ssim_weight: 0.5
 
 logging:
   wandb: True
