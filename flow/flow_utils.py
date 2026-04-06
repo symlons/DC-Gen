@@ -1,44 +1,68 @@
+import os
+import torch
+from .flow_config import TrainDiT3DConfig, TRAIN_TIMESTEP_MODES, SAMPLE_TIME_SCHEDULES
+from .dit import DiT_models
+from .logging_utils import format_kv_block
+from multigpu import rank0_print
+
+DTYPE_NAME_MAP = {"float32": "fp32", "float16": "fp16", "bfloat16": "bf16"}
+
+def _resolve_autocast_dtype(cfg, device):
+    requested_dtype = getattr(cfg.training, "autocast_dtype", "auto")
+    if device.type == "cuda":
+        if requested_dtype == "auto":
+            return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        if requested_dtype == "bfloat16" and not torch.cuda.is_bf16_supported():
+            return torch.float16
+    elif device.type == "mps":
+        return torch.float16
+    elif device.type == "cpu":
+        return torch.bfloat16
+    else:
+        return None
+    return getattr(torch, requested_dtype)
+
 def print_config_summary(cfg: TrainDiT3DConfig, device: torch.device, in_channels: int, spatial_shape: tuple[int, int, int]):
-    rows = [
-        ("Experiment", cfg.experiment.name),
-        ("Device", device),
-        ("HDF Path", cfg.paths.hdf_path),
-        ("NIfTI Train", cfg.paths.nifti_dir),
-        ("NIfTI Val", cfg.paths.nifti_val_dir),
-        ("Latent Train", cfg.dataset.train_dir),
-        ("Latent Val", cfg.dataset.val_dir),
-        ("Channels", in_channels),
-        ("Spatial Size", spatial_shape),
-        ("Model", cfg.model.variant),
-        ("Patch Size", cfg.model.patch_size),
-        ("Hidden Size", cfg.model.hidden_size),
-        ("Depth", cfg.model.depth),
-        ("Heads", cfg.model.num_heads),
-        ("Num Classes", max(1, cfg.model.num_classes)),
-        ("Objective", f"Rectified Flow ({cfg.objective.mode})"),
-        ("Objective Beta", f"({cfg.objective.beta_a}, {cfg.objective.beta_b})"),
-        ("Epochs", cfg.training.num_epochs),
-        ("Batch Size", cfg.training.batch_size),
-        ("Num Workers", cfg.training.num_workers),
-        ("Persistent Workers", cfg.training.persistent_workers),
-        ("DType", cfg.training.dtype),
-        ("Autocast", f"{cfg.training.use_autocast} ({cfg.training.autocast_dtype} -> {resolve_autocast_dtype(cfg, device)})"),
-        ("LR", cfg.training.learning_rate),
-        ("Weight Decay", cfg.training.weight_decay),
-        ("EMA Decay", cfg.training.ema_decay),
-        ("EMA Warmup", cfg.training.ema_warmup_steps),
-        ("Sample Steps", cfg.sampling.sample_steps),
-        ("Sampler", cfg.sampling.solver),
-        ("Time Schedule", cfg.sampling.time_schedule),
-        ("Schedule Power", cfg.sampling.time_schedule_power),
-        ("Inspection", cfg.inspection.enabled),
-        ("Inspect Every", cfg.inspection.inspect_every),
-        ("Inspect Modules", cfg.inspection.module_names or "default"),
-        ("Save Dir", cfg.paths.save_dir),
-        ("Checkpoints", cfg.paths.checkpoint_dir),
-        ("WandB", cfg.logging.wandb),
-    ]
-    rank0_print(format_kv_block("Config Summary", rows))
+     rows = [
+         ("Experiment", cfg.experiment.name),
+         ("Device", device),
+         ("HDF Path", cfg.paths.hdf_path),
+         ("NIfTI Train", cfg.paths.nifti_dir),
+         ("NIfTI Val", cfg.paths.nifti_val_dir),
+         ("Latent Train", cfg.dataset.train_dir),
+         ("Latent Val", cfg.dataset.val_dir),
+         ("Channels", in_channels),
+         ("Spatial Size", spatial_shape),
+         ("Model", cfg.model.variant),
+         ("Patch Size", cfg.model.patch_size),
+         ("Hidden Size", cfg.model.hidden_size),
+         ("Depth", cfg.model.depth),
+         ("Heads", cfg.model.num_heads),
+         ("Num Classes", max(1, cfg.model.num_classes)),
+         ("Objective", f"Rectified Flow ({cfg.objective.mode})"),
+         ("Objective Beta", f"({cfg.objective.beta_a}, {cfg.objective.beta_b})"),
+         ("Epochs", cfg.training.num_epochs),
+         ("Batch Size", cfg.training.batch_size),
+         ("Num Workers", cfg.training.num_workers),
+         ("Persistent Workers", cfg.training.persistent_workers),
+         ("DType", cfg.training.dtype),
+         ("Autocast", f"{cfg.training.use_autocast} ({cfg.training.autocast_dtype} -> {_resolve_autocast_dtype(cfg, device)})"),
+         ("LR", cfg.training.learning_rate),
+         ("Weight Decay", cfg.training.weight_decay),
+         ("EMA Decay", cfg.training.ema_decay),
+         ("EMA Warmup", cfg.training.ema_warmup_steps),
+         ("Sample Steps", cfg.sampling.sample_steps),
+         ("Sampler", cfg.sampling.solver),
+         ("Time Schedule", cfg.sampling.time_schedule),
+         ("Schedule Power", cfg.sampling.time_schedule_power),
+         ("Inspection", cfg.inspection.enabled),
+         ("Inspect Every", cfg.inspection.inspect_every),
+         ("Inspect Modules", cfg.inspection.module_names or "default"),
+         ("Save Dir", cfg.paths.save_dir),
+         ("Checkpoints", cfg.paths.checkpoint_dir),
+         ("WandB", cfg.logging.wandb),
+     ]
+     rank0_print(format_kv_block("Config Summary", rows))
 
 def validate_and_finalize_config(cfg: TrainDiT3DConfig) -> TrainDiT3DConfig:
     VALID_TRAIN_DTYPES = {"float32", "float16", "bfloat16"}

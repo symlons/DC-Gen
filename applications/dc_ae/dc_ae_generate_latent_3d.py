@@ -188,11 +188,11 @@ def run_worker(rank, world_size, cfg):
     os.environ["RANK"] = str(rank)
     os.environ["WORLD_SIZE"] = str(world_size)
     os.environ["LOCAL_RANK"] = str(rank)
-    
+
     if torch.cuda.is_available():
         dist_init()
         torch.cuda.set_device(rank)
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = build_model(cfg).eval().to(device)
@@ -261,9 +261,9 @@ def run_worker(rank, world_size, cfg):
 
 def main():
     cfg = get_config(GenerateLatent3DConfig)
-    
+
     world_size = torch.cuda.device_count()
-    
+
     if world_size > 1:
         mp.set_start_method("spawn", force=True)
         mp.spawn(run_worker, args=(world_size, cfg), nprocs=world_size, join=True)

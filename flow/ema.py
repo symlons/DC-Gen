@@ -1,6 +1,5 @@
 import copy
 import math
-
 import torch
 import torch.nn as nn
 
@@ -45,6 +44,6 @@ def update_ema_warmup(
 def update_ema(ema_model, model, decay=0.9999):
     ema_model = unwrap_model(ema_model)
     model = unwrap_model(model)
-    for ema_param, model_param in zip(ema_model.parameters(), model.parameters()):
+    for ema_param, model_param in zip(ema_model.parameters(), model.parameters()): # todo use c++ foreach
         if model_param.requires_grad:
             ema_param.data.mul_(decay).add_(model_param.data, alpha=1 - decay)

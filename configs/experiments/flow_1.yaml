@@ -16,12 +16,12 @@ paths:
   hdf_path: "/data/ct_rate_train_batch_0_v13.hdf"
   checkpoint_root_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase1"
   checkpoint_dir: null
-  save_root_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04"
+  save_root_dir: "/cluster/home/kostfab1/DC-Gen/flow_1"
   save_dir: null
   nifti_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
   nifti_val_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
-  latent_train_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04/latents/train"
-  latent_val_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04/latents/valid"
+  latent_train_dir: "/cluster/projects/2025_stmd_VT_diff/latents/latents_v04_shallow_phase1_train_v2"
+  latent_val_dir: "/cluster/projects/2025_stmd_VT_diff/latents/latents_v04_shallow_phase1_valid_v2"
 
 objective:
   eps: 1e-5
@@ -30,12 +30,12 @@ objective:
   sigma: 1.0
   beta_a: 1.0
   beta_b: 1.0
-  latent_mean: 0.0
-  latent_std: 1.0
+  latent_mean: 0.033
+  latent_std: 0.825
 
 training:
   num_epochs: 350
-  batch_size: 2
+  batch_size: 1024
   shuffle_data: true
   num_workers: 8
   persistent_workers: true
@@ -44,7 +44,7 @@ training:
   dtype: "float32"
   autocast_dtype: "auto"
   use_autocast: true
-  compile: false
+  compile: true
   learning_rate: 2e-4
   weight_decay: 1e-2
   grad_clip_norm: 1.0
@@ -57,19 +57,15 @@ training:
   ema_warmup_steps: 2000
 
 model:
-  variant: "custom"
+  variant: "DiT-L/1"
   input_size: null
   patch_size: 1
-  in_channels: null
-  hidden_size: 384
-  depth: 12
-  num_heads: 6
-  mlp_ratio: 4.0
+  in_channels: 32
   num_classes: 1
   class_dropout_prob: 0.0
   learn_sigma: false
   ae_model_name: "dc-ae-f32c32-in-1.0_3d-shallow"
-  ae_checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase1"
+  ae_checkpoint_dir: "/cluster/projects/2025_stmd_VT_diff/DC-GEN_backup/checkpoints_v04_shallow_phase1"
 
 sampling:
   enabled: true
@@ -86,10 +82,10 @@ sampling:
   t_end: 1.0
 
 logging:
-  wandb: false
+  wandb: true
   wandb_project: "ct_dit_3d_rectified_flow"
-  validate_every: 250
-  max_val_batches: 10
+  validate_every: 5000
+  max_val_batches: null
   save_samples: true
 
 inspection:

@@ -69,12 +69,14 @@ def infer_latent_shape(
     expected_input_size: Optional[tuple[int, int, int]] = None,
 ) -> tuple[int, tuple[int, int, int]]:
     sample = dataset[0]["image"]
-    if sample.ndim != 4: raise ValueError(f"Expected latent sample [C, D, H, W], got {tuple(sample.shape)}")
+    if sample.ndim != 4: raise ValueError(f"Expected latent sample [C, D, H, W], got shape {tuple(sample.shape)}")
 
     in_channels = int(sample.shape[0])
-    spatial_shape = tuple(int(dim) for dim in sample.shape[1:])
+    spatial_shape = tuple(int(d) for d in sample.shape[1:])
 
-    if expected_in_channels is not None and expected_in_channels != in_channels: raise ValueError(f"Configured model.in_channels={expected_in_channels} does not match latent channels={in_channels}.")
-    if expected_input_size is not None and expected_input_size != spatial_shape: raise ValueError(f"Configured model.input_size={expected_input_size} does not match latent shape={spatial_shape}.")
+    if expected_in_channels is not None and in_channels != expected_in_channels:
+        raise ValueError(f"model.in_channels={expected_in_channels} but dataset has {in_channels} channels")
+    if expected_input_size is not None and spatial_shape != expected_input_size: 
+        raise ValueError(f"model.input_size={expected_input_size} but dataset has shape {spatial_shape}")
 
     return in_channels, spatial_shape

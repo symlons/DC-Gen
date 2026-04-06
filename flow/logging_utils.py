@@ -1,6 +1,9 @@
 from collections.abc import Sequence
+from typing import Optional
 
 import torch
+
+from multigpu import rank0_print
 
 
 def basic_tensor_stats_dict(name: str, tensor: torch.Tensor) -> dict[str, float]:

@@ -29,8 +29,12 @@ def init_distributed(rank: int, world_size: int):
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
         os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
-        if "MASTER_PORT" not in os.environ:
-            os.environ["MASTER_PORT"] = "29500"
+        if "MASTER_PORT" not in os.environ: os.environ["MASTER_PORT"] = "29500"
+        rank0_print("[DDP init] "
+            f"world_size={world_size}, "
+            f"master_addr={os.environ['MASTER_ADDR']}, "
+            f"master_port={os.environ['MASTER_PORT']}"
+        )
         dist.init_process_group(backend="nccl", device_id=torch.device(f"cuda:{rank}"))
 
 

@@ -109,5 +109,31 @@ def should_run(step: int, every: Optional[int]) -> bool:
      return every is not None and step > 0 and step % every == 0
 
 def torch_dtype(name: str) -> torch.dtype:
-     """Convert string dtype name to torch.dtype."""
      return get_dtype_from_str(DTYPE_NAME_MAP[name])
+
+def shutdown_handler(signum, frame):
+    global _shutdown_requested
+    _shutdown_requested = True
+    rank0_print(f"\n[{os.getpid()}] Shutdown signal received. Finishing current batch...")
+
+
+
+def get_git_info():
+    """Get git commit hash, status, and diff."""
+    git_info = {}
+    try:
+        commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        git_info["git_commit_hash"] = commit_hash
+
+        status = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+        git_info["git_status"] = status if status else "clean"
+
+        diff = subprocess.check_output(["git", "diff", "HEAD"], text=True).strip()
+        git_info["git_diff"] = diff if diff else "no changes"
+
+        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+        git_info["git_branch"] = branch
+    except Exception as e:
+        git_info["git_error"] = str(e)
+
+    return git_info

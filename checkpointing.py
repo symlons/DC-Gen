@@ -24,12 +24,8 @@ def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque
         "model_state_dict": base_model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
     }
-    if ema_model is not None:
-        checkpoint["ema_state_dict"] = ema_model.state_dict()
-
-    # Save wandb run ID if logging
-    if wandb.run is not None:
-        checkpoint['wandb_run_id'] = wandb.run.id
+    if ema_model is not None: checkpoint["ema_state_dict"] = ema_model.state_dict()
+    if wandb.run is not None: checkpoint['wandb_run_id'] = wandb.run.id
 
     try:
         torch.save(checkpoint, ckpt_path)
@@ -55,8 +51,7 @@ def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque
 
 def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=None):
     resume = getattr(cfg.training, "resume_from_checkpoint", False)
-    if not resume:
-        return 0, None
+    if not resume: return 0, None
 
     ckpt_path = getattr(cfg.training, "resume_from_checkpoint_path", None)
     if not (ckpt_path and os.path.isfile(ckpt_path)):
@@ -78,11 +73,8 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
         has_orig_mod = any(k.startswith("_orig_mod.") for k in state_dict.keys())
         current_has_orig_mod = any(k.startswith("_orig_mod.") for k in base_model.state_dict().keys())
         
-        if has_orig_mod and not current_has_orig_mod:
-            state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
-        elif not has_orig_mod and current_has_orig_mod:
-            state_dict = {f"_orig_mod.{k}": v for k, v in state_dict.items()}
-        
+        if has_orig_mod and not current_has_orig_mod: state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+        elif not has_orig_mod and current_has_orig_mod: state_dict = {f"_orig_mod.{k}": v for k, v in state_dict.items()}
         base_model.load_state_dict(state_dict)
         
         if load_optimizer_state:
@@ -97,8 +89,7 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
         else:
             print("[INFO] Skipped loading optimizer state (load_optimizer_state=False)")
             
-        if ema_model is not None and "ema_state_dict" in ckpt:
-            ema_model.load_state_dict(ckpt["ema_state_dict"])
+        if ema_model is not None and "ema_state_dict" in ckpt: ema_model.load_state_dict(ckpt["ema_state_dict"])
     except Exception as e:
         print(f"Failed to load checkpoint {ckpt_path}: {e}")
         return 0, None
@@ -106,11 +97,9 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
     global_step = ckpt.get("global_step", ckpt.get("iteration", 0))
     wandb_run_id = ckpt.get("wandb_run_id", None)
     
-    if isinstance(global_step, tuple):
-        global_step = global_step[0] if global_step else 0
+    if isinstance(global_step, tuple): global_step = global_step[0] if global_step else 0
     
     print(f"Resumed from checkpoint {ckpt_path} at global_step {global_step}")
-    if wandb_run_id:
-        print(f"WandB run ID: {wandb_run_id}")
+    if wandb_run_id: print(f"WandB run ID: {wandb_run_id}")
     global_step += 1
     return global_step, wandb_run_id

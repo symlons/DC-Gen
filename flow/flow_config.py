@@ -1,3 +1,9 @@
+from dataclasses import dataclass, field
+from typing import Optional
+
+TRAIN_TIMESTEP_MODES = {"uniform", "logit_normal", "sigmoid"}
+SAMPLE_TIME_SCHEDULES = {"linear", "quadratic", "sqrt"}
+
 @dataclass
 class DatasetConfig:
     train_dir: Optional[str] = None
@@ -10,6 +16,7 @@ class DatasetConfig:
 
 
 @dataclass
+class PathsConfig:
     hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
     checkpoint_root_dir: str = "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v03"
     checkpoint_dir: Optional[str] = None
@@ -17,8 +24,8 @@ class DatasetConfig:
     save_dir: Optional[str] = None
     nifti_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
     nifti_val_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
-    latent_train_dir: str = "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v03/latents/train"
-    latent_val_dir: str = "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v03/latents/valid"
+    latent_train_dir: str = "/cluster/projects/2025_stmd_VT_diff/latents/latents_v04_shallow_phase1_train"
+    latent_val_dir: str = "/cluster/projects/2025_stmd_VT_diff/latents/latents_v04_shallow_phase1_valid"
 
 
 @dataclass
