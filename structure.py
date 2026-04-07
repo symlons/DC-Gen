@@ -453,16 +453,16 @@ def main_worker(rank: int, world_size: int, cfg):
                     range_text = f", raw_min={bmin:.3f}, raw_max={bmax:.3f}"
                     wandb_range_text = f"step {global_step}: raw batch range before clip/normalize [{bmin:.3f}, {bmax:.3f}]" + (f"; per-sample {sample_text}" if sample_text else "")
                 print(f"Iter {global_step}: {metrics_str}{range_text}")
-            if log_metrics:
-                wandb.log({
-                    "loss/total": loss.item(), "loss/recon": recon_loss.item(),
-                    "loss/perceptual": perc_loss.item(), "loss/detail": detail_loss.item(),
-                    "loss/gan": gan_loss.item(), "metrics/psnr": psnr_value,
-                    "metrics/ssim": ssim_value, "metrics/slice_psnr": slice_psnr_value,
-                    "metrics/slice_ssim": slice_ssim_value, "grad_norm": grad_norm, "epoch": epoch,
-                    **tensor_stats_dict("batch", batch), **tensor_stats_dict("recon", recon),
-                }, step=global_step)
-                if wandb.run is not None and wandb_range_text is not None: wandb.run.summary["raw_input_range_text"] = wandb_range_text
+                if log_metrics:
+                    wandb.log({
+                        "loss/total": loss.item(), "loss/recon": recon_loss.item(),
+                        "loss/perceptual": perc_loss.item(), "loss/detail": detail_loss.item(),
+                        "loss/gan": gan_loss.item(), "metrics/psnr": psnr_value,
+                        "metrics/ssim": ssim_value, "metrics/slice_psnr": slice_psnr_value,
+                        "metrics/slice_ssim": slice_ssim_value, "grad_norm": grad_norm, "epoch": epoch,
+                        **tensor_stats_dict("batch", batch), **tensor_stats_dict("recon", recon),
+                    }, step=global_step)
+                    if wandb.run is not None and wandb_range_text is not None: wandb.run.summary["raw_input_range_text"] = wandb_range_text
 
             if save_diff: barrier(); viz.save(batch, recon, cfg.paths.save_dir, global_step) if is_main_process() else None; barrier()
 

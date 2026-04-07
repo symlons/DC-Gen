@@ -10,8 +10,8 @@
 #SBATCH --ntasks=1
 #SBATCH --job-name=3d_dc_ae_phase1_ssim
 
-#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/%A/%N.out
-#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/%A/%N.err
+#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/ssim/%A/%N.out
+#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/ssim/%A/%N.err
 #SBATCH --chdir=/cluster/home/kostfab1/DC-Gen/
 #SBATCH --signal=B:SIGUSR1@90
 #SBATCH --requeue

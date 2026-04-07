@@ -20,6 +20,7 @@ class PathsConfig:
     hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
     checkpoint_root_dir: str = "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v03"
     checkpoint_dir: Optional[str] = None
+    save_root_dir: Optional[str] = None
     save_dir: Optional[str] = None
     nifti_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
     nifti_val_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
