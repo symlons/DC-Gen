@@ -252,6 +252,7 @@ def main_worker(rank: int, world_size: int, cfg):
             num_replicas=world_size,
             rank=rank,
             shuffle=cfg.training.shuffle_data,
+            drop_last=True
         )
     else:
         sampler = None
@@ -435,7 +436,7 @@ def main_worker(rank: int, world_size: int, cfg):
             # --- backward + step (all ranks must participate for DDP sync)
             optimizer.zero_grad()
             loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf'))
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             if i < 2: rank0_print(f"  Iter {i}: backward {_tm.time()-_t0:.2f}s")
 

@@ -21,7 +21,7 @@ hparams:
   learning_rate: 2e-5
 
 objective:
-  ssim_weight: 0.5
+  ssim_weight: 0.1
 
 logging:
   wandb: True
