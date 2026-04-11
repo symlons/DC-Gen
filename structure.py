@@ -1,32 +1,28 @@
 import torch
 import wandb
 import argparse
-import io
 import logging
 import os
 import re
 import signal
-import sys
-import sysconfig
 from collections import deque
-from monai.data import set_track_meta
 
 from print_utils import print_config_summary, print_param_group_modules, tensor_stats_dict
 from monai.transforms import CenterSpatialCrop, Compose, Resize, ScaleIntensityRange, SpatialPad, RandSpatialCrop
 from torch.utils.data import DataLoader, DistributedSampler
 from data import collate_fn_skip_none
 
-from basics import get_autocast_ctx, get_git_info, resolve_device, move_batch, run
+from basics import get_autocast_ctx, get_git_info, resolve_device, run
 from checkpointing import load_checkpoint, save_checkpoint
 from config import load_config, list_models
-from dc_gen.ae_model_zoo import DCAE_HF, create_dc_ae_model_cfg, DCAE
+from dc_gen.ae_model_zoo import DCAE_HF, create_dc_ae_model_cfg
 from evaluation import evaluate
-from multigpu import cleanup, init_distributed, is_main_process, rank0_print, barrier, wrap_ddp, main_process_first, aggregate_metrics
-from registry import GANLoss, dataset_registry, loss_registry
-from viz import Visualize
+from multigpu import cleanup, init_distributed, is_main_process, rank0_print, barrier, wrap_ddp, main_process_first
 from train_validation import run_validation
 from flow.ema import create_ema_model, update_ema_warmup
 from ae_utils import compute_loss
+from registry import GANLoss, dataset_registry, loss_registry
+from viz import Visualize
 
 _shutdown_requested = False
 main_pid = os.getpid()
@@ -218,7 +214,16 @@ def main_worker(rank: int, world_size: int, cfg):
                     val_str = ", ".join(fmt(k, v) for k, v in val_result.items())
                     try: open(log_file, "a").write(f"val iter {global_step}: {val_str}\n")
                     except Exception as e: print(f"[WARNING] Failed to write val log: {e}")
-                    if log_metrics: wandb.log({**{f"val/{k}": v for k, v in val_result.items()} }, step=global_step)
+
+                    if log_metrics:
+                        wandb.log({
+                            f"val/{k}": (vv.item() if torch.is_tensor(vv) and vv.numel() == 1
+                                else vv.detach().cpu().numpy() if torch.is_tensor(vv)
+                                else vv
+                            )
+                            for k, v in val_result.items()
+                            for vv in [(v.as_tensor() if hasattr(v, "as_tensor") else v)]
+                        }, step=global_step)
 
             if save_ckpt:
                 barrier() # todo: do we really need those barriers?

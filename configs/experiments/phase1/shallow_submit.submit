@@ -58,7 +58,7 @@ fi
 export MASTER_PORT
 export MASTER_ADDR=$(hostname)
 
-OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --experiment phase1/dc-ae-f32c32-in-1.0_3d-shallow &
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --experiment phase1/dc-ae-f32c32-in-1.0_3d-shallow --model f32c32_shallow_narrow &
 
 child_pid=$!
 wait $child_pid

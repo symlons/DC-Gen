@@ -45,7 +45,7 @@ class ObjectiveConfig:
     loss_fn: str = "l1"
     perceptual_weight: float = 0.25
     detail_weight: float = 0.0
-    gan_weight: float = 0.2
+    gan_weight: float = 0.0
     ssim_weight: float = 0.0
     gan_loss_type: str = "hinge"
     gan_patch_size: List[int] = field(default_factory=lambda: [32, 32, 16])
