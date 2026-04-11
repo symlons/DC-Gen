@@ -1,11 +1,11 @@
 dims: "3d"
 
 experiment:
-  name: "shallow-v4-experiment"
+  name: "l1"
 
 paths:
-  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase1_ssim_2"
-  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase1_ssim_2"
+  save_dir: "/cluster/home/kostfab1/DC-Gen/l1"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/l1"
 
 training:
   batch_size: 6
@@ -26,5 +26,5 @@ logging:
   wandb_resume_run: True
   save_volumes: True
   viz_every: 1000
-  validate_every: 2500
+  validate_every: 1000
   print_model_arch: False

@@ -10,8 +10,8 @@
 #SBATCH --ntasks=1
 #SBATCH --job-name=3d_dc_ae_phase1_ssim
 
-#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/ssim/%A/%N.out
-#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/ssim/%A/%N.err
+#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/slurm/%A.out
+#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/slurm/%A.err
 #SBATCH --chdir=/cluster/home/kostfab1/DC-Gen/
 #SBATCH --signal=B:SIGUSR1@90
 #SBATCH --requeue
@@ -58,7 +58,8 @@ fi
 export MASTER_PORT
 export MASTER_ADDR=$(hostname)
 
-OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --experiment phase1/dc-ae-f32c32-in-1.0_3d-shallow --model f32c32_shallow_narrow &
+#OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --experiment phase1/dc-ae-f32c32-in-1.0_3d-shallow --model f32c32_shallow_narrow &
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --config $CONFIG --model f32c32_shallow_narrow &
 
 child_pid=$!
 wait $child_pid

@@ -77,3 +77,18 @@ f32c256_regular_wide:
   enc_width: [128, 256, 512, 512, 1024, 1024]
   enc_depth: [2, 2, 2, 3, 3, 3]
   dec_depth: [3, 3, 3, 3, 3, 3]
+
+
+
+# Custom
+f32c32_shallow_narrow_aniso_depth_last:
+  latent_channels: 32
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]
+
+  dims: 3d
+  in_channels: 1
+
+  kernel_size: [[1,3,3], [1,3,3], [1,3,3], [1,3,3], [1,3,3], [3,3,3]]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [1,2,2], [2,2,2]]

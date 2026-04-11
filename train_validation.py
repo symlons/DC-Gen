@@ -27,19 +27,34 @@ def run_validation(model, val_loader, device, dtype, cfg, *, forward_fn, decode_
             pixel_recon = decode_fn(recon) if decode_fn is not None else recon
             pixel_real  = decode_fn(batch)  if decode_fn is not None else batch
 
-            for k, v in evaluate(pixel_recon, pixel_real).items(): accum[k] = accum.get(k, 0.0) + v
-            if loss_fn is not None: loss_total += loss_fn(recon, batch)
+            for k, v in evaluate(pixel_recon, pixel_real).items():
+                if torch.is_tensor(v):
+                    accum.setdefault(k, []).append(v.detach().cpu())
+                else:
+                    accum[k] = accum.get(k, 0.0) + float(v)
+
+            if loss_fn is not None: loss_total += loss_fn(recon, batch).item()
             count += 1
 
     print()
     model.train()
     if count == 0: return {}
 
-    result = aggregate_metrics({k: v / count for k, v in accum.items()})
+    result = {}
+    for k, v in accum.items():
+        if isinstance(v, list):
+            full = torch.cat(v, dim=0) # full denotes per slice values
+            result[k] = full.mean().item()
+            result[f"{k}_full"] = full
+        else:
+            result[k] = v / count
+
+    result = aggregate_metrics(result)
     if loss_fn is not None: result["loss"] = aggregate_metrics({"loss": loss_total / count})["loss"]
 
     if is_main_process():
         rank0_print(f"[val] Validation complete at step {global_step}")
         for k, v in result.items(): rank0_print(f"val/{k}: {v:.4f}" if not torch.is_tensor(v) else f"val/{k}: {v.mean().item():.4f}")
-        if log_metrics: wandb.log({ **{f"val/{k}": v if not torch.is_tensor(v) else v.mean().item() for k, v in result.items()}}, step=global_step)
+        if log_metrics: wandb.log({**{f"val/{k}": v if not torch.is_tensor(v) else v.mean().item() for k, v in result.items() if not k.endswith("_full")}}, step=global_step)
+
     return result

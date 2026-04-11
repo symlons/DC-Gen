@@ -7,6 +7,8 @@ import re
 import signal
 from collections import deque
 
+from rich.console import Console
+
 from print_utils import print_config_summary, print_param_group_modules, tensor_stats_dict
 from monai.transforms import CenterSpatialCrop, Compose, Resize, ScaleIntensityRange, SpatialPad, RandSpatialCrop
 from torch.utils.data import DataLoader, DistributedSampler
@@ -77,6 +79,33 @@ def main_worker(rank: int, world_size: int, cfg):
     if use_cuda: torch.cuda.set_device(rank)
     if use_cuda and world_size > 1: init_distributed(rank, world_size)
 
+    exp_name = cfg.experiment.name
+    log_dir = os.path.join(cfg.paths.save_dir, exp_name, "logs")
+    viz_dir = os.path.join(cfg.paths.save_dir, exp_name, "viz")
+
+    if is_main_process():
+        os.makedirs(log_dir, exist_ok=True)
+        os.makedirs(viz_dir, exist_ok=True)
+
+        import sys
+        log_path = os.path.join(log_dir, "stdout.log")
+        log_f = open(log_path, "a", buffering=1)
+
+        class Tee:
+            def write(self, data):
+                sys.__stdout__.write(data)
+                log_f.write(data)
+            def flush(self):
+                sys.__stdout__.flush()
+                log_f.flush()
+
+        sys.stdout = sys.stderr = Tee()
+
+        console = Console()
+        exp_root = os.path.join(cfg.paths.save_dir, exp_name)
+        print("Experiment root:", exp_root)
+        print("Checkpoints:", cfg.paths.checkpoint_dir)
+
     num_workers = cfg.training.num_workers
     if use_cuda and world_size > 1: num_workers = max(1, num_workers // world_size)
 
@@ -134,7 +163,6 @@ def main_worker(rank: int, world_size: int, cfg):
     gan = GANLoss(cfg, device) if cfg.objective.gan_weight > 0 else None
 
     checkpoint_queue = deque()
-    log_file = os.path.join(cfg.paths.save_dir, "training_log.txt")
     num_epochs = cfg.training.num_epochs
     log_metrics = cfg.logging.wandb
 
@@ -142,7 +170,7 @@ def main_worker(rank: int, world_size: int, cfg):
         git_info = get_git_info()
         cfg_dict = vars(cfg)
         cfg_dict.update(git_info)
-        wandb.init(project="ae_v1", config=cfg_dict)
+        wandb.init(project="ae_v1", name=cfg.experiment.name, config=cfg_dict)
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         print_config_summary(cfg, device)
 
@@ -173,7 +201,6 @@ def main_worker(rank: int, world_size: int, cfg):
                 recon = model(batch)
             real, fake = batch.float(), recon.float()
             loss_terms, loss = compute_loss(fake, real, loss_fns, gan, global_step, cfg)
-            # --- backward + step (all ranks must participate for DDP sync)
             optimizer.zero_grad(); loss.backward(); grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); optimizer.step()
             update_ema_warmup(ema_model, model, global_step, decay=0.9999, warmup_steps=2000)
 
@@ -181,9 +208,6 @@ def main_worker(rank: int, world_size: int, cfg):
                 with torch.no_grad(): results_dict = evaluate(recon.detach(), batch.detach())
                 fmt = lambda k, v: f"{k}={v:.3f}" if not torch.is_tensor(v) else f"{k}={[round(x.item(), 3) for x in v.flatten()[torch.randperm(v.numel())[:min(4, v.numel())]]]}"
                 metrics_str = ", ".join(fmt(k, v) for k, v in results_dict.items())
-
-                try: open(log_file, "a").write(f"iter {global_step}: {metrics_str}\n")
-                except Exception as e: print(f"[WARNING] Failed to write to log file {log_file}: {e}")
 
                 rank0_print(f"iter {global_step}: {metrics_str}")
 
@@ -198,35 +222,39 @@ def main_worker(rank: int, world_size: int, cfg):
                         **tensor_stats_dict("recon", recon),
                     }, step=global_step)
 
-            if save_diff: barrier(); viz.save(batch, recon, cfg.paths.save_dir, global_step) if is_main_process() else None; barrier()
+            if save_diff: barrier(); viz.save(batch, recon, viz_dir, global_step) if is_main_process() else None; barrier()
             if do_validation:
                 rank0_print(f"\n[val] Starting validation at step {global_step}...")
                 val_result = run_validation(
                     ema_model, val_loader, device, dtype, cfg,
                     forward_fn=lambda m, x: m(x),
-                    loss_fn=lambda recon, real: compute_loss(recon.float(), real.float(), loss_fns, None, global_step, cfg)[1].item(),
+                    loss_fn=lambda recon, real: compute_loss(recon.float(), real.float(), loss_fns, None, global_step, cfg)[1],
                     global_step=global_step,
                     log_metrics=log_metrics,
                     shutdown_flag=lambda: _shutdown_requested,
                 )
-
                 if is_main_process() and val_result:
                     val_str = ", ".join(fmt(k, v) for k, v in val_result.items())
-                    try: open(log_file, "a").write(f"val iter {global_step}: {val_str}\n")
-                    except Exception as e: print(f"[WARNING] Failed to write val log: {e}")
 
                     if log_metrics:
                         wandb.log({
-                            f"val/{k}": (vv.item() if torch.is_tensor(vv) and vv.numel() == 1
-                                else vv.detach().cpu().numpy() if torch.is_tensor(vv)
-                                else vv
-                            )
-                            for k, v in val_result.items()
-                            for vv in [(v.as_tensor() if hasattr(v, "as_tensor") else v)]
+                            **{
+                                f"val/{k}": (vv.item() if torch.is_tensor(vv) and vv.numel() == 1
+                                    else vv.detach().cpu().numpy() if torch.is_tensor(vv)
+                                    else vv
+                                )
+                                for k, v in val_result.items() if not k.endswith("_full")
+                                for vv in [(v.as_tensor() if hasattr(v, "as_tensor") else v)]
+                            },
+                            **{
+                                f"val/{k}_hist": wandb.Histogram(v.detach().cpu().numpy())
+                                for k, v in val_result.items() if k.endswith("_full")
+                            }
                         }, step=global_step)
 
+
             if save_ckpt:
-                barrier() # todo: do we really need those barriers?
+                barrier()
                 if is_main_process(): save_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, global_step, checkpoint_queue, cfg.training.max_checkpoints, ema_model=ema_model)
                 barrier()
             global_step += 1
