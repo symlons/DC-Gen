@@ -744,6 +744,59 @@ class DCAE(BaseAE):
         x = self.decoder(x)
         return x
 
+def build_dcae_cfg_from_variant(variant: dict, pretrained_path=None) -> DCAEConfig:
+    n = len(variant["enc_width"])
+    bt_enc = variant.get("enc_block_type", "ResBlock3D")
+    bt_dec = variant.get("dec_block_type", bt_enc)
+    bt_enc_list = variant.get("enc_block_type_list") or [bt_enc] * n
+    bt_dec_list = variant.get("dec_block_type_list") or [bt_dec] * n
+    dec_width = variant.get("dec_width", variant["enc_width"])
+    dims = variant.get("dims", "3d")
+
+    ks = variant.get("kernel_size")
+    if ks is None and variant.get("anisotropic"):
+        ks = [[1,3,3]] * (n-1) + [[3,3,3]]
+
+    cfg = OmegaConf.structured(DCAEConfig)
+    OmegaConf.set_struct(cfg, False)
+
+    cfg.dims = dims
+    cfg.in_channels = variant.get("in_channels", 1)
+    cfg.latent_channels = variant["latent_channels"]
+    cfg.encoder.dims = dims
+    cfg.encoder.block_type = bt_enc_list
+    cfg.encoder.width_list = list(variant["enc_width"])
+    cfg.encoder.depth_list = list(variant["enc_depth"])
+    cfg.decoder.dims = dims
+    cfg.decoder.block_type = bt_dec_list
+    cfg.decoder.width_list = list(dec_width)
+    cfg.decoder.depth_list = list(variant["dec_depth"])
+    cfg.decoder.norm = variant.get("dec_norm", "rms2d")
+    cfg.decoder.act = variant.get("dec_act", "silu")
+
+    if ks is not None: cfg.encoder.kernel_size = ks; cfg.decoder.kernel_size = ks
+    if (v := variant.get("enc_norm")) is not None: cfg.encoder.norm = v
+    if (v := variant.get("enc_act")) is not None: cfg.encoder.act = v
+    if (v := variant.get("downsample_block_type")) is not None: cfg.encoder.downsample_block_type = v
+    if (v := variant.get("upsample_block_type")) is not None: cfg.decoder.upsample_block_type = v
+    if (v := variant.get("out_block_type")) is not None: cfg.encoder.out_block_type = v
+    if (v := variant.get("in_block_type")) is not None: cfg.decoder.in_block_type = v
+    if (v := variant.get("out_shortcut")) is not None: cfg.encoder.out_shortcut = v
+    if (v := variant.get("in_shortcut")) is not None: cfg.decoder.in_shortcut = v
+    if (v := variant.get("out_act")) is not None: cfg.decoder.out_act = v
+    if (v := variant.get("scaling_factor")) is not None: cfg.scaling_factor = v
+    if (v := variant.get("pretrained_source")) is not None: cfg.pretrained_source = v
+    if variant.get("double_latent"): cfg.encoder.double_latent = True
+
+    cfg: DCAEConfig = OmegaConf.to_object(cfg)
+
+    if factors := variant.get("downsample_factors"):
+        factors = tuple(tuple(f) for f in factors)
+        cfg.encoder.downsample_factor_list = factors
+        cfg.decoder.upsample_factor_list = tuple(reversed(factors))
+
+    cfg.pretrained_path = pretrained_path
+    return cfg
 
 def dc_ae_f32c32(name: str, pretrained_path: str) -> DCAEConfig:
     if name == "dc-ae-f32c32-in-1.0_3d":

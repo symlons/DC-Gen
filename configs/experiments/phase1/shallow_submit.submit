@@ -17,9 +17,6 @@
 #SBATCH --requeue
 #SBATCH --open-mode=append
 
-# --------------------------------------------------------------------------------------
-# Stop signal handler (kept from your original, still useful)
-# --------------------------------------------------------------------------------------
 handle_signal() {
   echo "STOP SIGNAL DETECTED - REQUEUING JOB"
 
@@ -36,25 +33,32 @@ handle_signal() {
 }
 trap 'handle_signal' USR1
 
-# --------------------------------------------------------------------------------------
-# info
-# --------------------------------------------------------------------------------------
 echo "Running on $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Starting at $(date)"
 
-# --------------------------------------------------------------------------------------
-# modules + env
-# --------------------------------------------------------------------------------------
-#module load python/3.12.3
-#module load uv/0.7.22
 module load cuda/12.9.1
 
-source /cluster/home/kostfab1/dev/bin/activate
+source /cluster/home/kostfab1/dev2/bin/activate
 
-# --------------------------------------------------------------------------------------
-# run
-# --------------------------------------------------------------------------------------
-python3 structure.py --experiment phase1/dc-ae-f32c32-in-1.0_3d-shallow &
+NUM_GPUS=${SLURM_GPUS_ON_NODE:-1}
+
+for port in 8972 8973 8974 8975; do
+  if ! ss -tuln | grep -q ":$port "; then
+    MASTER_PORT=$port
+    break
+  fi
+done
+
+if [ -z "$MASTER_PORT" ]; then
+  echo "No free port found in range"
+  exit 1
+fi
+
+export MASTER_PORT
+export MASTER_ADDR=$(hostname)
+
+OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --experiment phase1/dc-ae-f32c32-in-1.0_3d-shallow &
+
 child_pid=$!
 wait $child_pid

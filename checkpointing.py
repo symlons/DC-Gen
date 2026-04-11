@@ -90,6 +90,7 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
             print("[INFO] Skipped loading optimizer state (load_optimizer_state=False)")
             
         if ema_model is not None and "ema_state_dict" in ckpt: ema_model.load_state_dict(ckpt["ema_state_dict"])
+        else: print("Could not find an ema model within the checkpoint.")
     except Exception as e:
         print(f"Failed to load checkpoint {ckpt_path}: {e}")
         return 0, None
@@ -99,7 +100,6 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
     
     if isinstance(global_step, tuple): global_step = global_step[0] if global_step else 0
     
-    print(f"Resumed from checkpoint {ckpt_path} at global_step {global_step}")
     if wandb_run_id: print(f"WandB run ID: {wandb_run_id}")
     global_step += 1
     return global_step, wandb_run_id

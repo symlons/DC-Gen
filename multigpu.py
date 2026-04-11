@@ -333,25 +333,3 @@ def run_worker(rank, world_size, cfg, device):
 def run_worker_entry(rank, world_size, cfg):
     device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
     run_worker(rank, world_size, cfg, device)
-
-
-def main():
-    cfg = get_config(GenerateLatent3DConfig)
-
-    world_size = torch.cuda.device_count()
-    print("Detected GPUs:", world_size)
-
-    if world_size > 1:
-        mp.set_start_method("spawn", force=True)
-        mp.spawn(
-            run_worker_entry,
-            args=(world_size, cfg),
-            nprocs=world_size,
-            join=True,
-        )
-    else:
-        run_worker(0, 1, cfg, torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-
-
-if __name__ == "__main__":
-    main()

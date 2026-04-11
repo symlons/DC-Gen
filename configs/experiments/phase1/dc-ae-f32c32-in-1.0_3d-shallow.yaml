@@ -3,29 +3,29 @@ dims: "3d"
 experiment:
   name: "shallow-v4-experiment"
 
-model:
-  name: "dc-ae-f32c32-in-1.0_3d-shallow"
-
 paths:
-  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase1_ssim"
-  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase1_ssim"
+  save_dir: "/cluster/home/kostfab1/DC-Gen/dc_ae_3d_v04_shallow_phase1_ssim_2"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/checkpoints_v04_shallow_phase1_ssim_2"
 
 training:
   batch_size: 6
 
 pipeline:
     resize_hw: [256, 256]
-    normalize_input_range: [-1, 1]
+    normalize_input_range: [-1000, 1000]
 
 hparams:
   learning_rate: 2e-5
 
 objective:
-  ssim_weight: 0.1
+  ssim_weight: 0.3
+  gan_weight: 0.1
 
 logging:
   wandb: True
   wandb_resume_run: True
   save_volumes: True
-  viz_every: 2500
-  validate_every: 10000
+  viz_every: 1000
+  validate_every: 2
+  print_model_arch: False
+  val_max_batches: 5

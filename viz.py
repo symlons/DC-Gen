@@ -136,3 +136,4 @@ def save_figure(fig, save_path, im_for_colorbar=None, label=None):
     if im_for_colorbar is not None:
         fig.colorbar(im_for_colorbar, ax=fig.axes, location='right', shrink=0.85, pad=0.02, label=label)
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()

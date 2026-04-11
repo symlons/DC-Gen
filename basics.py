@@ -102,11 +102,14 @@ def resolve_device(rank: int) -> torch.device:
     use_cuda = torch.cuda.is_available()
     return torch.device("mps" if torch.backends.mps.is_available() and not use_cuda else f"cuda:{rank}" if use_cuda else "cpu")
 
-def move_batch(batch: dict[str, torch.Tensor], device: torch.device, dtype: torch.dtype) -> dict[str, torch.Tensor]: # todo: uses this for dc-ae training as well
-    return {key: value.to(device=device, dtype=dtype, non_blocking=True) for key, value in batch.items()}
+def move_batch(batch, device: torch.device, dtype: torch.dtype):
+    if isinstance(batch, torch.Tensor):  return batch.to(device=device, dtype=dtype, non_blocking=True)
+    if isinstance(batch, dict):          return {key: move_batch(value, device, dtype) for key, value in batch.items()}
+    if isinstance(batch, (list, tuple)): return type(batch)(move_batch(x, device, dtype) for x in batch)
+    return batch
 
-def should_run(step: int, every: Optional[int]) -> bool:
-     return every is not None and step > 0 and step % every == 0
+def should_run(step, every, start_at=0):
+    return every is not None and step >= start_at and step % every == 0
 
 def torch_dtype(name: str) -> torch.dtype:
      return get_dtype_from_str(DTYPE_NAME_MAP[name])
@@ -116,10 +119,13 @@ def shutdown_handler(signum, frame):
     _shutdown_requested = True
     rank0_print(f"\n[{os.getpid()}] Shutdown signal received. Finishing current batch...")
 
-
+def run(cfg, main_worker):
+    use_cuda = torch.cuda.is_available()
+    rank = int(os.environ.get("RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    main_worker(rank, world_size, cfg)
 
 def get_git_info():
-    """Get git commit hash, status, and diff."""
     git_info = {}
     try:
         commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -135,5 +141,4 @@ def get_git_info():
         git_info["git_branch"] = branch
     except Exception as e:
         git_info["git_error"] = str(e)
-
     return git_info

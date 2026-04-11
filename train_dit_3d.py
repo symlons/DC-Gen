@@ -176,9 +176,14 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
                 barrier()
                 if is_main_process() and val_loader is not None:
                     autoencoder.to(device)
-                    val_metrics = run_validation(eval_model, val_loader, objective, cfg, device, model_dtype, autoencoder)
+                    val_metrics = run_validation(
+                        eval_model, val_loader, device, model_dtype, cfg,
+                        forward_fn=lambda m, x: objective.compute_loss(m, x["image"])["x1_pred"],
+                        decode_fn=lambda z: autoencoder.decode(z.to(device)).to(device),
+                        global_step=global_step,
+                        log_metrics=cfg.logging.wandb,
+                    )
                     log_rank0(f"[val] {format_step_log(global_step, epoch, val_metrics)}", log_file)
-                    if cfg.logging.wandb: wandb.log(val_metrics, step=global_step)
                     autoencoder.to("cpu")
                     torch.cuda.empty_cache()
                 barrier()

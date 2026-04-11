@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
-
+import h5py
 
 def collate_fn_skip_none(batch):
     batch = [item for item in batch if item is not None]
@@ -228,9 +228,7 @@ class CTVolumeDataset(Dataset):
         if hdf_path:
             self.backend = HDF5Backend(hdf_path, group_names, dims, n_slices)
         elif nifti_dir or csv_metadata:
-            self.backend = NiftiBackend(
-                nifti_dir, csv_metadata, dims, n_slices, fraction
-            )
+            self.backend = NiftiBackend(nifti_dir, csv_metadata, dims, n_slices, fraction)
         else:
             raise ValueError("Must provide either hdf_path or nifti_dir/csv_metadata")
 

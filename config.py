@@ -1,12 +1,10 @@
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional
-
+from typing import List, Optional, Any
 import torch
 from omegaconf import OmegaConf
 
-EXPERIMENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "experiments")
-
+experiment_dirs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "experiments")
 
 @dataclass
 class DatasetConfig:
@@ -20,14 +18,15 @@ class PathsConfig:
     hdf_path: str = "/data/ct_rate_train_batch_0_v13.hdf"
     checkpoint_dir: str = ""
     save_dir: str = ""
-    nifti_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
-    nifti_val_dir: str = "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
+    nifti_dir: str = "/cluster/projects/2025_stmd_VT_diff/processed_256/train"
+    nifti_val_dir: str = "/cluster/projects/2025_stmd_VT_diff/processed_256/valid/"
 
 
 @dataclass
 class PipelineConfig:
     resize_hw: List[int] = field(default_factory=lambda: [256, 256])
     n_slices: Optional[int] = 32
+    random_slices: Optional[bool] = True
     resize_depth: Optional[int] = None
     clip_input_range: Optional[List[float]] = field(default_factory=lambda: [-1000.0, 1000.0])
     normalize_mode: str = "fixed"
@@ -46,8 +45,7 @@ class ObjectiveConfig:
     loss_fn: str = "l1"
     perceptual_weight: float = 0.25
     detail_weight: float = 0.0
-    gan_enable: bool = False
-    gan_weight: float = 0.0
+    gan_weight: float = 0.2
     ssim_weight: float = 0.0
     gan_loss_type: str = "hinge"
     gan_patch_size: List[int] = field(default_factory=lambda: [32, 32, 16])
@@ -111,84 +109,56 @@ class Config:
     hparams: HParamsConfig = field(default_factory=HParamsConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    model_variant: Optional[Any] = None
 
 
 def validate_and_finalize_config(cfg):
     if cfg.dims not in {"2d", "3d"}:
         raise ValueError(f"Unsupported dims={cfg.dims!r}, expected '2d' or '3d'")
 
-    if len(cfg.pipeline.resize_hw) != 2 or any(
-        dim is None or dim <= 0 for dim in cfg.pipeline.resize_hw
-    ):
-        raise ValueError(
-            "pipeline.resize_hw must be a 2-element list of positive integers"
-        )
+    if len(cfg.pipeline.resize_hw) != 2 or any(dim is None or dim <= 0 for dim in cfg.pipeline.resize_hw):
+        raise ValueError("pipeline.resize_hw must be a 2-element list of positive integers")
 
     if cfg.pipeline.normalize_mode not in {"sample", "fixed"}:
         raise ValueError("pipeline.normalize_mode must be one of: 'sample' or 'fixed'")
 
     if len(cfg.pipeline.normalize_output_range) != 2:
-        raise ValueError(
-            "pipeline.normalize_output_range must contain exactly two values"
-        )
+        raise ValueError("pipeline.normalize_output_range must contain exactly two values")
 
     if cfg.pipeline.clip_input_range is not None:
         if len(cfg.pipeline.clip_input_range) != 2:
-            raise ValueError(
-                "pipeline.clip_input_range must contain exactly two values"
-            )
+            raise ValueError("pipeline.clip_input_range must contain exactly two values")
         if cfg.pipeline.clip_input_range[0] >= cfg.pipeline.clip_input_range[1]:
             raise ValueError("pipeline.clip_input_range must be strictly increasing")
 
     if cfg.pipeline.normalize_input_range is not None:
         if len(cfg.pipeline.normalize_input_range) != 2:
-            raise ValueError(
-                "pipeline.normalize_input_range must contain exactly two values"
-            )
-        if (
-            cfg.pipeline.normalize_input_range[0]
-            >= cfg.pipeline.normalize_input_range[1]
-        ):
-            raise ValueError(
-                "pipeline.normalize_input_range must be strictly increasing"
-            )
+            raise ValueError("pipeline.normalize_input_range must contain exactly two values")
+        if (cfg.pipeline.normalize_input_range[0] >= cfg.pipeline.normalize_input_range[1]):
+            raise ValueError("pipeline.normalize_input_range must be strictly increasing")
 
-    if (
-        cfg.pipeline.normalize_mode == "fixed"
-        and cfg.pipeline.normalize_input_range is None
-    ):
-        raise ValueError(
-            "pipeline.normalize_input_range must be set when normalize_mode='fixed'"
-        )
+    if (cfg.pipeline.normalize_mode == "fixed" and cfg.pipeline.normalize_input_range is None):
+        raise ValueError("pipeline.normalize_input_range must be set when normalize_mode='fixed'")
 
     if cfg.training.dtype not in {"float32", "float16", "bfloat16"}:
-        raise ValueError(
-            "training.dtype must be one of: 'float32', 'float16', 'bfloat16'"
-        )
+        raise ValueError("training.dtype must be one of: 'float32', 'float16', 'bfloat16'")
 
     if cfg.training.autocast_dtype not in {"auto", "float16", "bfloat16"}:
-        raise ValueError(
-            "training.autocast_dtype must be one of: 'auto', 'float16', 'bfloat16'"
-        )
+        raise ValueError("training.autocast_dtype must be one of: 'auto', 'float16', 'bfloat16'")
 
     if cfg.dims == "2d":
         cfg.pipeline.n_slices = None
         cfg.pipeline.resize_depth = None
-        if "_3d" in cfg.model.name:
+        if cfg.model_variant is None and "_3d" in cfg.model.name:
             raise ValueError(f"2D config cannot use 3D model name: {cfg.model.name}")
     else:
-        if "_3d" not in cfg.model.name:
-            raise ValueError(
-                f"3D config should use a 3D model variant, got: {cfg.model.name}"
-            )
+        if cfg.model_variant is None and "_3d" not in cfg.model.name:
+            raise ValueError(f"3D config should use a 3D model variant, got: {cfg.model.name}")
         if cfg.pipeline.n_slices is None and cfg.pipeline.resize_depth is None:
-            raise ValueError(
-                "3D config must set pipeline.n_slices or pipeline.resize_depth"
-            )
+            raise ValueError("3D config must set pipeline.n_slices or pipeline.resize_depth")
 
     if not cfg.paths.save_dir or not cfg.paths.checkpoint_dir:
-        raise ValueError(
-            f"No paths configured for model {cfg.model.name!r}. "
+        raise ValueError(f"No paths configured for model {cfg.model.name!r}. "
             f"Create an experiment YAML in configs/experiments/ or set paths explicitly."
         )
 
@@ -198,22 +168,36 @@ def validate_and_finalize_config(cfg):
     return cfg
 
 
-def load_config(yaml_path: str = None, experiment: str = None):
+def load_config(yaml_path: str = None, experiment: str = None, model: str = None):
+    import yaml
+    _registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "models", "registry.yaml")
     cfg = OmegaConf.structured(Config)
-
+    if model:
+        registry = yaml.safe_load(open(_registry_path))
+        if model not in registry:
+            raise ValueError(f"Model '{model}' not in registry. Available:\n" + "\n".join(
+                f"  {k:40s} lat={v['latent_channels']} enc_depth={v['enc_depth']} width={v['enc_width']}"
+                for k, v in registry.items()
+            ))
+        OmegaConf.set_struct(cfg, False)
+        cfg.model_variant = registry[model]
+        OmegaConf.set_struct(cfg, True)
     if experiment:
-        exp_path = os.path.join(EXPERIMENTS_DIR, f"{experiment}.yaml")
+        exp_path = os.path.join(experiment_dirs, f"{experiment}.yaml")
         if not os.path.isfile(exp_path):
-            available = [f.removesuffix(".yaml") for f in os.listdir(EXPERIMENTS_DIR) if f.endswith(".yaml")]
-            raise FileNotFoundError(
-                f"Experiment '{experiment}' not found at {exp_path}. "
-                f"Available: {available}"
-            )
+            available = [f.removesuffix(".yaml") for f in os.listdir(experiment_dirs) if f.endswith(".yaml")]
+            raise FileNotFoundError(f"Experiment '{experiment}' not found at {exp_path}. Available: {available}")
         cfg = OmegaConf.merge(cfg, OmegaConf.load(exp_path))
-
     if yaml_path:
-        yaml_cfg = OmegaConf.load(yaml_path)
-        cfg = OmegaConf.merge(cfg, yaml_cfg)
-
+        cfg = OmegaConf.merge(cfg, OmegaConf.load(yaml_path))
     cfg = OmegaConf.to_object(cfg)
     return validate_and_finalize_config(cfg)
+
+
+def list_models():
+    import yaml
+    _registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "models", "registry.yaml")
+    registry = yaml.safe_load(open(_registry_path))
+    print("\nAvailable models:")
+    for name, v in registry.items():
+        print(f"  {name:40s} lat={v['latent_channels']} enc_depth={v['enc_depth']} width={v['enc_width']}")
