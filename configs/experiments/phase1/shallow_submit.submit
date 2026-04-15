@@ -2,13 +2,12 @@
 
 #SBATCH --account=cai_ivs
 #SBATCH --partition=gpu_top
-#SBATCH --gres=gpu:h200sxm:1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --job-name=3d_dc_ae_phase1_ssim
+#SBATCH --job-name=l1_c128_regular_wide_ll
 
 #SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/slurm/%A.out
 #SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/slurm/%A.err
@@ -59,7 +58,11 @@ export MASTER_PORT
 export MASTER_ADDR=$(hostname)
 
 #OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --experiment phase1/dc-ae-f32c32-in-1.0_3d-shallow --model f32c32_shallow_narrow &
-OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --config $CONFIG --model f32c32_shallow_narrow &
+#OMP_NUM_THREADS=1 torchrun --nproc_per_node=$NUM_GPUS structure.py --config $CONFIG --model f32c32_shallow_narrow &
+OMP_NUM_THREADS=1 torchrun \
+  --nproc_per_node=$NUM_GPUS \
+  --master_port=$MASTER_PORT \
+  structure.py --config $CONFIG --model $MODEL &
 
 child_pid=$!
 wait $child_pid

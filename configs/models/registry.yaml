@@ -92,3 +92,90 @@ f32c32_shallow_narrow_aniso_depth_last:
 
   kernel_size: [[1,3,3], [1,3,3], [1,3,3], [1,3,3], [1,3,3], [3,3,3]]
   downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [1,2,2], [2,2,2]]
+
+
+
+# downsample last
+f32c32_shallow_narrow_last:
+  latent_channels: 32
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [2,2,2], [2,2,2]]
+
+f32c128_regular_wide_last:
+  latent_channels: 128
+  enc_width: [128, 256, 512, 512, 1024, 1024]
+  enc_depth: [2, 2, 2, 3, 3, 3]
+  dec_depth: [3, 3, 3, 3, 3, 3]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [2,2,2], [2,2,2]]
+
+f32c128_regular_wide_ll:
+  latent_channels: 128
+  enc_width: [128, 256, 512, 512, 1024, 1024]
+  enc_depth: [2, 2, 2, 3, 3, 3]
+  dec_depth: [3, 3, 3, 3, 3, 3]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [1,2,2], [2,2,2]]
+
+f32c128_regular_wide_none:
+  latent_channels: 128
+  enc_width: [128, 256, 512, 512, 1024, 1024]
+  enc_depth: [2, 2, 2, 3, 3, 3]
+  dec_depth: [3, 3, 3, 3, 3, 3]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [1,2,2], [1,2,2]]
+
+f32c32_utlra:
+  latent_channels: 32
+  enc_width: [128, 256, 512, 512, 1024, 1024]
+  enc_depth: [3, 4, 5, 6, 6, 6]
+  dec_depth: [6, 6, 6, 7, 7, 7]
+
+
+# rerun
+f32c128_shallow_narrow: # test against c256
+  latent_channels: 128
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]
+
+
+f32c128_shallow_narrow_last: # test against c256 and l1
+  latent_channels: 128
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [2,2,2], [2,2,2]]
+
+
+
+f32c128_shallow_narrow_adaptive: # test against c256
+  latent_channels: 128
+  out_block_type: AdaptiveOutputConvLayer
+  in_block_type: AdaptiveInputConvLayer
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]
+
+
+f32c128_shallow_narrow_last_adaptive: # test against c256 and l1
+  latent_channels: 128
+  out_block_type: AdaptiveOutputConvLayer
+  in_block_type: AdaptiveInputConvLayer
+  out_shortcut: null
+  in_shortcut: null
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [2,2,2], [2,2,2]]
+
+
+
+f32c128_shallow_narrow_adaptive: # test against c256 and l1
+  latent_channels: 128
+  out_block_type: AdaptiveOutputConvLayer
+  in_block_type: AdaptiveInputConvLayer
+  out_shortcut: null
+  in_shortcut: null
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]

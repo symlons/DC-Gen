@@ -371,6 +371,7 @@ def build_encoder_project_out_block(
                 kernel_size=3,
                 stride=1,
                 use_bias=True,
+                dims=dims
             )
         )
     else:
@@ -415,6 +416,7 @@ def build_decoder_project_in_block(
             kernel_size=3,
             stride=1,
             use_bias=True,
+            dims=dims
         )
     else:
         raise ValueError(f"decoder project in block type {block_type} is not supported")
@@ -763,32 +765,52 @@ def build_dcae_cfg_from_variant(variant: dict, pretrained_path=None) -> DCAEConf
     cfg.dims = dims
     cfg.in_channels = variant.get("in_channels", 1)
     cfg.latent_channels = variant["latent_channels"]
+
     cfg.encoder.dims = dims
     cfg.encoder.block_type = bt_enc_list
     cfg.encoder.width_list = list(variant["enc_width"])
     cfg.encoder.depth_list = list(variant["enc_depth"])
+
     cfg.decoder.dims = dims
     cfg.decoder.block_type = bt_dec_list
     cfg.decoder.width_list = list(dec_width)
     cfg.decoder.depth_list = list(variant["dec_depth"])
+
     cfg.decoder.norm = variant.get("dec_norm", "rms2d")
     cfg.decoder.act = variant.get("dec_act", "silu")
 
-    if ks is not None: cfg.encoder.kernel_size = ks; cfg.decoder.kernel_size = ks
-    if (v := variant.get("enc_norm")) is not None: cfg.encoder.norm = v
-    if (v := variant.get("enc_act")) is not None: cfg.encoder.act = v
-    if (v := variant.get("downsample_block_type")) is not None: cfg.encoder.downsample_block_type = v
-    if (v := variant.get("upsample_block_type")) is not None: cfg.decoder.upsample_block_type = v
-    if (v := variant.get("out_block_type")) is not None: cfg.encoder.out_block_type = v
-    if (v := variant.get("in_block_type")) is not None: cfg.decoder.in_block_type = v
-    if (v := variant.get("out_shortcut")) is not None: cfg.encoder.out_shortcut = v
-    if (v := variant.get("in_shortcut")) is not None: cfg.decoder.in_shortcut = v
-    if (v := variant.get("out_act")) is not None: cfg.decoder.out_act = v
-    if (v := variant.get("scaling_factor")) is not None: cfg.scaling_factor = v
-    if (v := variant.get("pretrained_source")) is not None: cfg.pretrained_source = v
-    if variant.get("double_latent"): cfg.encoder.double_latent = True
+    if ks is not None:
+        cfg.encoder.kernel_size = ks
+        cfg.decoder.kernel_size = ks
+
+    if "enc_norm" in variant:
+        cfg.encoder.norm = variant["enc_norm"]
+    if "enc_act" in variant:
+        cfg.encoder.act = variant["enc_act"]
+    if "downsample_block_type" in variant:
+        cfg.encoder.downsample_block_type = variant["downsample_block_type"]
+    if "upsample_block_type" in variant:
+        cfg.decoder.upsample_block_type = variant["upsample_block_type"]
+    if "out_block_type" in variant:
+        cfg.encoder.out_block_type = variant["out_block_type"]
+    if "in_block_type" in variant:
+        cfg.decoder.in_block_type = variant["in_block_type"]
+    if "out_shortcut" in variant:
+        cfg.encoder.out_shortcut = variant["out_shortcut"]
+    if "in_shortcut" in variant:
+        cfg.decoder.in_shortcut = variant["in_shortcut"]
+    if "out_act" in variant:
+        cfg.decoder.out_act = variant["out_act"]
+    if "scaling_factor" in variant:
+        cfg.scaling_factor = variant["scaling_factor"]
+    if "pretrained_source" in variant:
+        cfg.pretrained_source = variant["pretrained_source"]
+
+    if variant.get("double_latent"):
+        cfg.encoder.double_latent = True
 
     cfg: DCAEConfig = OmegaConf.to_object(cfg)
+    print(cfg)
 
     if factors := variant.get("downsample_factors"):
         factors = tuple(tuple(f) for f in factors)

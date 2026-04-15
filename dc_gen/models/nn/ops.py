@@ -152,37 +152,79 @@ class AdaptiveOutputConvLayer(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size: int = 3,
-        stride: int = 1,
-        dilation: int = 1,
+        kernel_size: int | tuple[int, ...] = 3,
+        stride: int | tuple[int, ...] = 1,
+        dilation: int | tuple[int, ...] = 1,
         groups: int = 1,
         use_bias: bool = False,
+        dims: str = "2d",
     ):
         super().__init__()
+
+        self.dims = dims
+
+        kernel_size = _normalize_spatial_arg(kernel_size, self.dims)
+        stride = _normalize_spatial_arg(stride, self.dims)
+        dilation = _normalize_spatial_arg(dilation, self.dims)
+
         padding = get_same_padding(kernel_size)
-        self.conv = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=(kernel_size, kernel_size),
-            stride=(stride, stride),
-            padding=padding,
-            dilation=(dilation, dilation),
-            groups=groups,
-            bias=use_bias,
-        )
+        padding = tuple(p * d for p, d in zip(padding, dilation))
+
+        if self.dims == "2d":
+            self.conv = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                dilation=dilation,
+                groups=groups,
+                bias=use_bias,
+            )
+        elif self.dims == "3d":
+            self.conv = nn.Conv3d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                dilation=dilation,
+                groups=groups,
+                bias=use_bias,
+            )
+        else:
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
 
     def forward(self, x: torch.Tensor, out_channels: Optional[int] = None) -> torch.Tensor:
         if out_channels is None:
             out_channels = self.conv.out_channels
-        x = F.conv2d(
-            x,
-            self.conv.weight[:out_channels],
-            self.conv.bias[:out_channels],
-            self.conv.stride,
-            self.conv.padding,
-            self.conv.dilation,
-            self.conv.groups,
-        )
+
+        weight = self.conv.weight[:out_channels]
+        bias = self.conv.bias[:out_channels] if self.conv.bias is not None else None
+
+        if self.dims == "2d":
+            x = F.conv2d(
+                x,
+                weight,
+                bias,
+                self.conv.stride,
+                self.conv.padding,
+                self.conv.dilation,
+                self.conv.groups,
+            )
+        elif self.dims == "3d":
+            x = F.conv3d(
+                x,
+                weight,
+                bias,
+                self.conv.stride,
+                self.conv.padding,
+                self.conv.dilation,
+                self.conv.groups,
+            )
+        else:
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
+
         return x
 
 
@@ -191,38 +233,79 @@ class AdaptiveInputConvLayer(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size: int = 3,
-        stride: int = 1,
-        dilation: int = 1,
+        kernel_size: int | tuple[int, ...] = 3,
+        stride: int | tuple[int, ...] = 1,
+        dilation: int | tuple[int, ...] = 1,
         groups: int = 1,
         use_bias: bool = False,
+        dims: str = "2d",
     ):
         super().__init__()
+
+        self.dims = dims
+
+        kernel_size = _normalize_spatial_arg(kernel_size, self.dims)
+        stride = _normalize_spatial_arg(stride, self.dims)
+        dilation = _normalize_spatial_arg(dilation, self.dims)
+
         padding = get_same_padding(kernel_size)
-        self.conv = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=(kernel_size, kernel_size),
-            stride=(stride, stride),
-            padding=padding,
-            dilation=(dilation, dilation),
-            groups=groups,
-            bias=use_bias,
-        )
+        padding = tuple(p * d for p, d in zip(padding, dilation))
+
+        if self.dims == "2d":
+            self.conv = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                dilation=dilation,
+                groups=groups,
+                bias=use_bias,
+            )
+        elif self.dims == "3d":
+            self.conv = nn.Conv3d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                dilation=dilation,
+                groups=groups,
+                bias=use_bias,
+            )
+        else:
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         in_channels = x.shape[1]
-        x = F.conv2d(
-            x,
-            self.conv.weight[:, :in_channels],
-            self.conv.bias,
-            self.conv.stride,
-            self.conv.padding,
-            self.conv.dilation,
-            self.conv.groups,
-        )
-        return x
 
+        weight = self.conv.weight[:, :in_channels]
+        bias = self.conv.bias if self.conv.bias is not None else None
+
+        if self.dims == "2d":
+            x = F.conv2d(
+                x,
+                weight,
+                bias,
+                self.conv.stride,
+                self.conv.padding,
+                self.conv.dilation,
+                self.conv.groups,
+            )
+        elif self.dims == "3d":
+            x = F.conv3d(
+                x,
+                weight,
+                bias,
+                self.conv.stride,
+                self.conv.padding,
+                self.conv.dilation,
+                self.conv.groups,
+            )
+        else:
+            raise ValueError(f"Unsupported dims='{self.dims}', expected '2d' or '3d'")
+
+        return x
 
 class UpSampleLayer(nn.Module):
     def __init__(

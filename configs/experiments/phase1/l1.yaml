@@ -4,8 +4,8 @@ experiment:
   name: "l1"
 
 paths:
-  save_dir: "/cluster/home/kostfab1/DC-Gen/l1"
-  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/l1"
+  save_dir: "/cluster/home/kostfab1/DC-Gen/l1_grad"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/l1_grad"
 
 training:
   batch_size: 6
@@ -19,6 +19,7 @@ hparams:
 
 objective:
   ssim_weight: 0.3
+  grad_weight: 0.2
   gan_weight: 0.0
 
 logging:

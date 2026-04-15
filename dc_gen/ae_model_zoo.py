@@ -155,8 +155,28 @@ class DCAE_HF(DCAE, PyTorchModelHubMixin):
         cfg = model_cfg if model_cfg is not None else create_dc_ae_model_cfg(model_name)
         DCAE.__init__(self, cfg)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.decode(self.encode(x))
+    def sample_c_prime(self, C, device, min_channels=16, step=4):
+        possible = torch.arange(min_channels, C + 1, step, device=device)
+        idx = torch.randint(0, possible.shape[0], (1,), device=device)
+        return possible[idx]
+
+    def forward(self, x: torch.Tensor, use_mask: bool = False):
+        z = self.encode(x)
+
+        if use_mask:
+            B, C = z.shape[:2]
+
+            c_prime = self.sample_c_prime(C, z.device)
+
+            channel_idx = torch.arange(C, device=z.device).view(1, C, *([1] * (z.dim() - 2)))
+            mask = (channel_idx < c_prime).to(z.dtype)
+
+            z = z * mask
+
+            recon = self.decode(z)
+            return recon, c_prime
+
+        return self.decode(z)
 
 class AutoencoderKL(nn.Module):
     def __init__(self, model_name: str):

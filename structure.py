@@ -82,6 +82,15 @@ def main_worker(rank: int, world_size: int, cfg):
     exp_name = cfg.experiment.name
     log_dir = os.path.join(cfg.paths.save_dir, exp_name, "logs")
     viz_dir = os.path.join(cfg.paths.save_dir, exp_name, "viz")
+    log_metrics = cfg.logging.wandb
+
+    if log_metrics and is_main_process():
+        git_info = get_git_info()
+        cfg_dict = vars(cfg)
+        cfg_dict.update(git_info)
+        wandb.init(project="ae_v1", name=cfg.experiment.name, config=cfg_dict)
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        print_config_summary(cfg, device)
 
     if is_main_process():
         os.makedirs(log_dir, exist_ok=True)
@@ -160,19 +169,11 @@ def main_worker(rank: int, world_size: int, cfg):
     for p in perceptual.parameters(): p.requires_grad = False
     loss_fns.append(("perceptual", perceptual, cfg.objective.perceptual_weight))
     loss_fns.append(("ssim_loss", loss_registry["ssim_loss"], cfg.objective.ssim_weight))
+    loss_fns.append(("grad", loss_registry["grad"](), cfg.objective.grad_weight))
     gan = GANLoss(cfg, device) if cfg.objective.gan_weight > 0 else None
 
     checkpoint_queue = deque()
     num_epochs = cfg.training.num_epochs
-    log_metrics = cfg.logging.wandb
-
-    if log_metrics and is_main_process():
-        git_info = get_git_info()
-        cfg_dict = vars(cfg)
-        cfg_dict.update(git_info)
-        wandb.init(project="ae_v1", name=cfg.experiment.name, config=cfg_dict)
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-        print_config_summary(cfg, device)
 
     rank0_print(f"[setup] Starting training loop (global_step={global_step})...")
     for epoch in range(num_epochs):
@@ -198,7 +199,7 @@ def main_worker(rank: int, world_size: int, cfg):
             if hasattr(batch, "as_tensor"): batch = batch.as_tensor()
 
             with get_autocast_ctx(cfg, device):
-                recon = model(batch)
+                recon, c_prime = model(batch, use_mask=True)
             real, fake = batch.float(), recon.float()
             loss_terms, loss = compute_loss(fake, real, loss_fns, gan, global_step, cfg)
             optimizer.zero_grad(); loss.backward(); grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); optimizer.step()
@@ -259,10 +260,10 @@ def main_worker(rank: int, world_size: int, cfg):
                 barrier()
             global_step += 1
 
-        rank0_print(f"\n[{rank}] Finalizing training...")
-        if log_metrics and wandb.run is not None: wandb.finish()
-        if use_cuda and world_size > 1: barrier(); cleanup()
-        rank0_print(f"[{rank}] Training completed")
+    rank0_print(f"\n[{rank}] Finalizing training...")
+    if log_metrics and wandb.run is not None: wandb.finish()
+    if use_cuda and world_size > 1: barrier(); cleanup()
+    rank0_print(f"[{rank}] Training completed")
 
 
 if __name__ == "__main__":

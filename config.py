@@ -47,6 +47,7 @@ class ObjectiveConfig:
     detail_weight: float = 0.0
     gan_weight: float = 0.0
     ssim_weight: float = 0.0
+    grad_weight: float = 0.0
     gan_loss_type: str = "hinge"
     gan_patch_size: List[int] = field(default_factory=lambda: [32, 32, 16])
     gan_ndf: int = 64

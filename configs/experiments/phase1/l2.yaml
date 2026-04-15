@@ -21,12 +21,13 @@ objective:
   loss_fn: "mse"
   ssim_weight: 0.3
   gan_weight: 0.0
+  grad_weight: 0.5
 
 logging:
   wandb: True
   wandb_resume_run: True
   save_volumes: True
-  viz_every: 1000
-  validate_every: 1000
+  viz_every: 5000
+  validate_every: 10000
   print_model_arch: False
 

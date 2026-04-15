@@ -67,7 +67,7 @@ class LocalPatchGAN:
         self.discriminator = PatchDiscriminator(in_channels=in_channels, ndf=ndf, n_layers=3)
         self.gan_loss = GANLoss(loss_type=loss_type)
     
-    def extract_patch_pairs(self, real: torch.Tensor, fake: torch.Tensor, num_patches: int = 4) -> Tuple[torch.Tensor, torch.Tensor]:
+    def extract_patch_pairs(self, real: torch.Tensor, fake: torch.Tensor, num_patches: int = 8) -> Tuple[torch.Tensor, torch.Tensor]:
         B, C, D, H, W = real.shape
         pd, ph, pw = self.patch_size
         

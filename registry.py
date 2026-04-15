@@ -7,7 +7,22 @@ from pytorch_msssim import MS_SSIM
 from monai.losses import PerceptualLoss
 from gan_loss import LocalPatchGAN
 from multigpu import rank0_print
+import kornia
 
+class GradientLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, pred, target):
+        B, C, D, H, W = pred.shape
+
+        pred_2d = pred.permute(0, 2, 1, 3, 4).reshape(B * D, C, H, W)
+        target_2d = target.permute(0, 2, 1, 3, 4).reshape(B * D, C, H, W)
+
+        grad_pred = kornia.filters.spatial_gradient(pred_2d)
+        grad_target = kornia.filters.spatial_gradient(target_2d)
+
+        return F.l1_loss(grad_pred, grad_target)
 
 class MSSSIMLoss(nn.Module):
     def __init__(self, channel=1):
@@ -28,13 +43,12 @@ class GANLoss(nn.Module):
             in_channels=1,
             patch_size=tuple(cfg.objective.gan_patch_size),
             ndf=cfg.objective.gan_ndf,
-            loss_type=cfg.objective.gan_loss_type,
         ).to(device)
 
         self.discriminator_optimizer = torch.optim.Adam(
             self.gan_module.discriminator.parameters(),
             lr=(cfg.hparams.discriminator_learning_rate or (cfg.hparams.learning_rate * 0.1)),
-            betas=(0.5, 0.999),
+            betas=(0.5, 0.9),
         )
 
         self.step_interval = cfg.objective.gan_discriminator_steps + 1
@@ -42,11 +56,20 @@ class GANLoss(nn.Module):
 
     def step(self, real, fake, global_step):
         is_gen_step = (global_step % self.step_interval == 0)
-        if is_gen_step: 
-            return self.gan_module.compute_generator_loss(real, fake), None
+
+        if is_gen_step:
+            for p in self.gan_module.discriminator.parameters():
+                p.requires_grad = False
+
+            g_loss = self.gan_module.compute_generator_loss(real, fake)
+
+            for p in self.gan_module.discriminator.parameters():
+                p.requires_grad = True
+
+            return g_loss, None
 
         self.discriminator_optimizer.zero_grad()
-        d_loss = self.gan_module.compute_discriminator_loss(real, fake.detach())
+        d_loss = self.gan_module.compute_discriminator_loss(real, fake)
         d_loss.backward()
         self.discriminator_optimizer.step()
         return real.new_zeros(()), d_loss.detach()
@@ -67,4 +90,5 @@ loss_registry = {
     "mse": F.mse_loss,
     "ssim_loss": ssimWrapper,
     "perceptual": lambda device: PerceptualLoss(spatial_dims=3, network_type="vgg", is_fake_3d=True).to(device),
+    "grad": GradientLoss
 }
