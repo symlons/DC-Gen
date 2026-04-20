@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from data import CTVolumeDataset
 from pytorch_msssim import MS_SSIM
 from monai.losses import PerceptualLoss
-from gan_loss import LocalPatchGAN
+from gan_loss import PatchGAN
 from multigpu import rank0_print
 import kornia
 
@@ -39,40 +39,32 @@ class GANLoss(nn.Module):
     def __init__(self, cfg, device):
         super().__init__()
         self.cfg = cfg
-        self.gan_module = LocalPatchGAN(
+        self.gan_module = PatchGAN(
             in_channels=1,
-            patch_size=tuple(cfg.objective.gan_patch_size),
             ndf=cfg.objective.gan_ndf,
+            n_layers=3,
         ).to(device)
-
+        
         self.discriminator_optimizer = torch.optim.Adam(
             self.gan_module.discriminator.parameters(),
             lr=(cfg.hparams.discriminator_learning_rate or (cfg.hparams.learning_rate * 0.1)),
-            betas=(0.5, 0.9),
+            betas=(0.5, 0.999),
         )
-
         self.step_interval = cfg.objective.gan_discriminator_steps + 1
-        rank0_print(f"[GAN] Initialized patch discriminator on all ranks.")
+        rank0_print(f"[GAN] Initialized hinge patch discriminator (ndf={cfg.objective.gan_ndf})")
 
-    def step(self, real, fake, global_step):
+    def step(self, real: torch.Tensor, fake: torch.Tensor, global_step: int):
         is_gen_step = (global_step % self.step_interval == 0)
-
+        
         if is_gen_step:
-            for p in self.gan_module.discriminator.parameters():
-                p.requires_grad = False
-
-            g_loss = self.gan_module.compute_generator_loss(real, fake)
-
-            for p in self.gan_module.discriminator.parameters():
-                p.requires_grad = True
-
+            g_loss = self.gan_module.g_loss(fake)
             return g_loss, None
-
-        self.discriminator_optimizer.zero_grad()
-        d_loss = self.gan_module.compute_discriminator_loss(real, fake)
-        d_loss.backward()
-        self.discriminator_optimizer.step()
-        return real.new_zeros(()), d_loss.detach()
+        else:
+            self.discriminator_optimizer.zero_grad()
+            d_loss = self.gan_module.d_loss(real, fake.detach())
+            d_loss.backward()
+            self.discriminator_optimizer.step()
+            return real.new_zeros(()), d_loss.detach()
 
 dataset_registry = {
     "CTVolume": CTVolumeDataset,
