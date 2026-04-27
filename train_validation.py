@@ -25,7 +25,7 @@ def run_validation(model, val_loader, device, dtype, cfg, *, forward_fn, decode_
             with get_autocast_ctx(cfg, device): recon = forward_fn(model, batch)
 
             pixel_recon = decode_fn(recon) if decode_fn is not None else recon
-            pixel_real  = decode_fn(batch)  if decode_fn is not None else batch
+            pixel_real  = decode_fn(batch["image"]) if decode_fn is not None else batch["image"]
 
             for k, v in evaluate(pixel_recon, pixel_real).items():
                 if torch.is_tensor(v):

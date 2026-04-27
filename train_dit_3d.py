@@ -28,16 +28,8 @@ from multigpu import barrier, cleanup, init_distributed, is_main_process, rank0_
 from train_data import make_dataloader, make_dataset
 from train_validation import run_validation
 
-
 import sys
 import sysconfig
-_python_include = sysconfig.get_path("include") # for torch.compile/triton
-if _python_include and os.path.isfile(os.path.join(_python_include, "Python.h")):
-    os.environ["CPATH"] = _python_include + os.pathsep + os.environ.get("CPATH", "")
-else:
-    _fallback = f"/opt/python/{sysconfig.get_python_version()}.4/include/python{sysconfig.get_python_version()}"
-    if os.path.isfile(os.path.join(_fallback, "Python.h")):
-        os.environ["CPATH"] = _fallback + os.pathsep + os.environ.get("CPATH", "")
 
 def load_autoencoder(cfg: TrainDiT3DConfig, model_dtype, device):
     import glob
@@ -172,7 +164,7 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
                     }, step=global_step)
 
             # Validation
-            if should_run(global_step, cfg.logging.validate_every):
+            if should_run(global_step, cfg.logging.validate_every, start_at=1):
                 barrier()
                 if is_main_process() and val_loader is not None:
                     autoencoder.to(device)
@@ -234,7 +226,6 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
 def load_config(experiment=None):
     from omegaconf import OmegaConf
     from flow.flow_utils import validate_and_finalize_config
-    
     cfg = OmegaConf.structured(TrainDiT3DConfig)
     if experiment:
         exp = Path(experiment)
