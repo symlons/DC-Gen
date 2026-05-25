@@ -23,6 +23,7 @@ from flow.inspection import ModelInspector, flatten_inspection_stats, format_ins
 from flow.latent_dataset import infer_latent_shape
 from flow.logging_utils import format_step_log, log_rank0, tensor_stats_dict
 from flow.rectified_flow import RectifiedFlowObjective
+from flow.transformer_engine import build_fp8_recipe, fp8_autocast_context, wrap_linears
 
 from multigpu import barrier, cleanup, init_distributed, is_main_process, rank0_print, wrap_ddp
 from train_data import make_dataloader, make_dataset
@@ -95,6 +96,11 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
 
     model_dtype = torch_dtype(cfg.training.dtype) # (fp32) master weights
     model = build_model(cfg, in_channels, spatial_shape).to(device=device, dtype=model_dtype)
+    fp8_recipe = None
+    if cfg.transformer_engine.enabled:
+        fp8_recipe = build_fp8_recipe(cfg)
+        if cfg.transformer_engine.replace_linears:
+            model = wrap_linears(model)
     ema_model = create_ema_model(model).to(device=device, dtype=model_dtype) if cfg.training.ema_decay is not None else None
     autoencoder = load_autoencoder(cfg, model_dtype, device)
 
@@ -113,6 +119,14 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
         beta_b=cfg.objective.beta_b,
         latent_mean=cfg.objective.latent_mean,
         latent_std=cfg.objective.latent_std,
+        tweo_enabled=cfg.tweo.enabled,
+        tweo_weight=cfg.tweo.weight,
+        tweo_tau=cfg.tweo.tau,
+        tweo_power=cfg.tweo.power,
+        tweo_eps=cfg.tweo.eps,
+        tweo_schedule=cfg.tweo.schedule,
+        log_block_activations=cfg.tweo.log_activations,
+        max_steps=len(train_loader) * cfg.training.num_epochs,
     )
     inspector = ModelInspector(
         model,
@@ -130,7 +144,13 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
     if is_main_process():
         print_config_summary(cfg, device, in_channels, spatial_shape)
         rank0_print(model)
-        if cfg.logging.wandb: wandb.init(project=cfg.logging.wandb_project, name=cfg.experiment.name, config=asdict(cfg))
+        if cfg.logging.wandb:
+            wandb.init(
+                project=cfg.logging.wandb_project,
+                name=cfg.experiment.name,
+                group=cfg.logging.wandb_group,
+                config=asdict(cfg),
+            )
 
     eval_model = ema_model or model 
     for epoch in range(cfg.training.num_epochs):
@@ -142,7 +162,9 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
 
             batch = move_batch(batch, device, model_dtype)
             optimizer.zero_grad(set_to_none=True)
-            with get_autocast_ctx(cfg, device): outputs = objective.compute_loss(model, batch["image"])
+            with get_autocast_ctx(cfg, device):
+                with fp8_autocast_context(cfg.transformer_engine.enabled and cfg.transformer_engine.fp8_autocast, fp8_recipe):
+                    outputs = objective.compute_loss(model, batch["image"], global_step=global_step)
             loss = outputs["loss"]
             loss.backward()
 
@@ -151,10 +173,25 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
 
             if ema_model is not None: update_ema_warmup(ema_model, model, global_step + 1, decay=cfg.training.ema_decay, warmup_steps=cfg.training.ema_warmup_steps)
             if is_main_process() and global_step % cfg.training.log_every == 0:
-                log_rank0(f"[train] {format_step_log(global_step, epoch, {'loss': loss.item(), 't_mean': outputs['t'].float().mean().item(), 'grad_norm': grad_norm})}", log_file)
+                train_metrics = {
+                    "loss": loss.item(),
+                    "flow_loss": outputs["flow_loss"].item(),
+                    "tweo_loss": outputs["tweo_loss"].item(),
+                    "tweo_weight": outputs["tweo_weight"].item(),
+                    "block_abs_max": outputs["block_activation_abs_max"].item(),
+                    "block_abs_mean": outputs["block_activation_abs_mean"].item(),
+                    "t_mean": outputs["t"].float().mean().item(),
+                    "grad_norm": grad_norm,
+                }
+                log_rank0(f"[train] {format_step_log(global_step, epoch, train_metrics)}", log_file)
                 if cfg.logging.wandb:
                     wandb.log({
                         "loss/total": loss.item(),
+                        "loss/flow": outputs["flow_loss"].item(),
+                        "loss/tweo": outputs["tweo_loss"].item(),
+                        "tweo/weight": outputs["tweo_weight"].item(),
+                        "activations/block_abs_max": outputs["block_activation_abs_max"].item(),
+                        "activations/block_abs_mean": outputs["block_activation_abs_mean"].item(),
                         "timestep/mean": outputs["t"].float().mean().item(),
                         "train/grad_norm": grad_norm,
                         **tensor_stats_dict("latent", batch["image"]),
@@ -170,7 +207,7 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
                     autoencoder.to(device)
                     val_metrics = run_validation(
                         eval_model, val_loader, device, model_dtype, cfg,
-                        forward_fn=lambda m, x: objective.compute_loss(m, x["image"])["x1_pred"],
+                        forward_fn=lambda m, x: objective.compute_loss(m, x["image"], global_step=global_step)["x1_pred"],
                         decode_fn=lambda z: autoencoder.decode(z.to(device)).to(device),
                         global_step=global_step,
                         log_metrics=cfg.logging.wandb,
@@ -198,13 +235,22 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
                         autoencoder.to("cpu")
                         torch.cuda.empty_cache()
 
+                    sample_paths = []
                     for i in range(recon.shape[0]):
                         img = recon[i, 0, recon.shape[2] // 2]
                         img = ((img - img.min()) / (img.max() - img.min() + 1e-8) * 255).byte().cpu().numpy()
-                        Image.fromarray(img).save(f"{cfg.sampling.output_dir}/sample_{global_step}_{i}.png")
+                        png_path = f"{cfg.sampling.output_dir}/sample_{global_step}_{i}.png"
+                        Image.fromarray(img).save(png_path)
+                        sample_paths.append(png_path)
 
                         vol = recon[i, 0].detach().cpu().numpy()
-                        nib.save(nib.Nifti1Image(vol, affine=np.eye(4)), f"{cfg.sampling.output_dir}/sample_{global_step}_{i}.nii.gz")
+                        nifti_path = f"{cfg.sampling.output_dir}/sample_{global_step}_{i}.nii.gz"
+                        nib.save(nib.Nifti1Image(vol, affine=np.eye(4)), nifti_path)
+                        sample_paths.append(nifti_path)
+
+                    if cfg.logging.wandb and wandb.run is not None:
+                        for sample_path in sample_paths:
+                            wandb.save(sample_path, base_path=cfg.sampling.output_dir)
 
                     print(recon.shape)
                     log_rank0(f"[sample] step={global_step} saved_to={cfg.sampling.output_dir}", log_file)

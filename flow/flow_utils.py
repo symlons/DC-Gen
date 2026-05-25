@@ -41,6 +41,8 @@ def print_config_summary(cfg: TrainDiT3DConfig, device: torch.device, in_channel
          ("Num Classes", max(1, cfg.model.num_classes)),
          ("Objective", f"Rectified Flow ({cfg.objective.mode})"),
          ("Objective Beta", f"({cfg.objective.beta_a}, {cfg.objective.beta_b})"),
+         ("TWEO", f"{cfg.tweo.enabled} (weight={cfg.tweo.weight}, tau={cfg.tweo.tau}, p={cfg.tweo.power}, schedule={cfg.tweo.schedule})"),
+         ("Transformer Engine", f"{cfg.transformer_engine.enabled} (fp8={cfg.transformer_engine.fp8_autocast}, format={cfg.transformer_engine.recipe_format}, amax={cfg.transformer_engine.amax_history_len})"),
          ("Epochs", cfg.training.num_epochs),
          ("Batch Size", cfg.training.batch_size),
          ("Num Workers", cfg.training.num_workers),
@@ -96,6 +98,20 @@ def validate_and_finalize_config(cfg: TrainDiT3DConfig) -> TrainDiT3DConfig:
         raise ValueError("training.ema_warmup_steps must be non-negative.")
     if cfg.inspection.inspect_every is not None and cfg.inspection.inspect_every <= 0:
         raise ValueError("inspection.inspect_every must be positive or None.")
+    if cfg.tweo.weight < 0:
+        raise ValueError("tweo.weight must be non-negative.")
+    if cfg.tweo.tau <= 0:
+        raise ValueError("tweo.tau must be positive.")
+    if cfg.tweo.power <= 0:
+        raise ValueError("tweo.power must be positive.")
+    if cfg.tweo.eps < 0:
+        raise ValueError("tweo.eps must be non-negative.")
+    if cfg.tweo.schedule not in {"constant", "cosine"}:
+        raise ValueError("tweo.schedule must be one of ['constant', 'cosine'].")
+    if cfg.transformer_engine.recipe_format not in {"E4M3", "E5M2", "HYBRID"}:
+        raise ValueError("transformer_engine.recipe_format must be one of ['E4M3', 'E5M2', 'HYBRID'].")
+    if cfg.transformer_engine.amax_history_len <= 0:
+        raise ValueError("transformer_engine.amax_history_len must be positive.")
 
     cfg.paths.checkpoint_dir = cfg.paths.checkpoint_dir or os.path.join(
         cfg.paths.checkpoint_root_dir, "flow_matching", cfg.experiment.name

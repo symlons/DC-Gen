@@ -33,9 +33,9 @@ def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque
         print(f"Failed to save checkpoint {ckpt_path}: {e}")
         return
 
-    if getattr(cfg, "wandb", None) and getattr(cfg.wandb, "enabled", False):
+    if getattr(getattr(cfg, "logging", None), "wandb", False) and wandb.run is not None:
         try:
-            wandb.save(ckpt_path)
+            wandb.save(ckpt_path, base_path=save_dir)
         except Exception as e:
             print(f"Failed to save checkpoint to WandB: {e}")
 

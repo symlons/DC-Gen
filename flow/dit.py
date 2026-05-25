@@ -184,7 +184,7 @@ class DiT(nn.Module):
         x = x.reshape(x.shape[0], c, D * p, H * p, W * p)
         return x
 
-    def forward(self, x, t, y=None):
+    def forward(self, x, t, y=None, return_block_activations=False):
         x, spatial_shape = self.x_embedder(x)
 
         pos_embed = get_3d_sincos_pos_embed(x.shape[-1], spatial_shape)
@@ -201,11 +201,16 @@ class DiT(nn.Module):
         else:
             c = t
 
+        block_activations = [] if return_block_activations else None
         for block in self.blocks:
             x = block(x, c)
+            if block_activations is not None:
+                block_activations.append(x)
 
         x = self.final_layer(x, c)
         x = self.unpatchify(x, spatial_shape)
+        if block_activations is not None:
+            return x, block_activations
         return x
 
     def forward_with_cfg(self, x, t, y, cfg_scale):

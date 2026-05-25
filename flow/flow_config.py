@@ -66,6 +66,27 @@ class TrainingConfig:
 
 
 @dataclass
+class TWEOConfig:
+    enabled: bool = False
+    weight: float = 0.01
+    tau: float = 3.0
+    power: float = 4.0
+    eps: float = 1e-6
+    schedule: str = "constant"
+    log_activations: bool = True
+
+
+@dataclass
+class TransformerEngineConfig:
+    enabled: bool = False
+    replace_linears: bool = True
+    fp8_autocast: bool = True
+    recipe_format: str = "HYBRID"
+    amax_history_len: int = 16
+    amax_compute_algo: str = "max"
+
+
+@dataclass
 class ModelConfig:
     variant: str = "custom"
     input_size: Optional[list[int]] = None
@@ -102,6 +123,7 @@ class SamplingConfig:
 class LoggingConfig:
     wandb: bool = False
     wandb_project: str = "ct_dit_3d_rectified_flow"
+    wandb_group: Optional[str] = None
     validate_every: Optional[int] = 250
     max_val_batches: Optional[int] = 10
     save_samples: bool = True
@@ -132,6 +154,8 @@ class TrainDiT3DConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     objective: ObjectiveConfig = field(default_factory=ObjectiveConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    tweo: TWEOConfig = field(default_factory=TWEOConfig)
+    transformer_engine: TransformerEngineConfig = field(default_factory=TransformerEngineConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     sampling: SamplingConfig = field(default_factory=SamplingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)

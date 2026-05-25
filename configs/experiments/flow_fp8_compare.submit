@@ -1,0 +1,57 @@
+#!/bin/bash
+
+#SBATCH --account=cai_ivs
+#SBATCH --partition=gpu_top
+#SBATCH --gres=gpu:h200sxm:1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --time=24:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --array=0-1
+#SBATCH --job-name=flow_fp8_tweo_cmp
+#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/flow_fp8_tweo_compare/%x_%A_%a.out
+#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/flow_fp8_tweo_compare/%x_%A_%a.err
+#SBATCH --chdir=/cluster/home/kostfab1/DC-Gen/
+#SBATCH --signal=B:SIGUSR1@90
+#SBATCH --requeue
+#SBATCH --open-mode=append
+
+set -euo pipefail
+
+EXPERIMENTS=(
+  "configs/experiments/flow_fp8_baseline.yaml"
+  "configs/experiments/flow_fp8_tweo.yaml"
+)
+EXPERIMENT="${EXPERIMENTS[$SLURM_ARRAY_TASK_ID]}"
+
+handle_signal() {
+  echo "STOP SIGNAL DETECTED - REQUEUING JOB"
+  if [ -n "${child_pid:-}" ]; then
+    kill -INT "$child_pid" || true
+    sleep 10
+    if kill -0 "$child_pid" 2>/dev/null; then
+      kill -KILL "$child_pid" || true
+    fi
+  fi
+  scontrol requeue "$SLURM_JOB_ID"
+  exit 0
+}
+trap 'handle_signal' USR1
+
+echo "Running on $(hostname)"
+echo "Job ID: $SLURM_JOB_ID task $SLURM_ARRAY_TASK_ID"
+echo "Experiment: $EXPERIMENT"
+echo "Starting at $(date)"
+
+module load cuda/12.9.1
+source /cluster/home/kostfab1/dev2/bin/activate
+export PYTHONPATH=/cluster/home/kostfab1/DC-Gen/compat:${PYTHONPATH:-}
+mkdir -p /cluster/home/kostfab1/DC-Gen/logs/flow_fp8_tweo_compare
+
+python3 -c "import transformer_engine.pytorch as te; from transformer_engine.common.recipe import DelayedScaling, Format; print('Transformer Engine preflight OK', te.__name__)"
+python3 -c "from train_dit_3d import load_config; cfg = load_config('$EXPERIMENT'); print('Config preflight OK', cfg.experiment.name, 'tweo=', cfg.tweo.enabled, 'wandb_project=', cfg.logging.wandb_project)"
+
+python3 train_dit_3d.py --experiment "$EXPERIMENT" &
+child_pid=$!
+wait "$child_pid"
