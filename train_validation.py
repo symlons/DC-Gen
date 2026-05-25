@@ -22,10 +22,13 @@ def run_validation(model, val_loader, device, dtype, cfg, *, forward_fn, decode_
             if is_main_process(): print(f"\r[val] {i+1}/{total}", end="", flush=True)
 
             batch = move_batch(batch, device, dtype)
+            batch_image = batch["image"] if isinstance(batch, dict) else batch
             with get_autocast_ctx(cfg, device): recon = forward_fn(model, batch)
+            if isinstance(recon, (tuple, list)):
+                recon = recon[0]
 
             pixel_recon = decode_fn(recon) if decode_fn is not None else recon
-            pixel_real  = decode_fn(batch["image"]) if decode_fn is not None else batch["image"]
+            pixel_real = decode_fn(batch_image) if decode_fn is not None else batch_image
 
             for k, v in evaluate(pixel_recon, pixel_real).items():
                 if torch.is_tensor(v):
@@ -33,7 +36,7 @@ def run_validation(model, val_loader, device, dtype, cfg, *, forward_fn, decode_
                 else:
                     accum[k] = accum.get(k, 0.0) + float(v)
 
-            if loss_fn is not None: loss_total += loss_fn(recon, batch).item()
+            if loss_fn is not None: loss_total += loss_fn(recon, batch_image).item()
             count += 1
 
     print()
