@@ -220,3 +220,26 @@ last_latent128_adaptiveio:
   enc_depth: [1, 1, 1, 1, 1, 1]
   dec_depth: [1, 1, 1, 1, 1, 1]
   downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [2,2,2], [2,2,2]]
+
+
+last_latent64_adaptiveio:
+  latent_channels: 64
+  out_block_type: AdaptiveOutputConvLayer
+  in_block_type: AdaptiveInputConvLayer
+  out_shortcut: null
+  in_shortcut: null
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [2,2,2], [2,2,2]]
+
+last_latent256_adaptiveio:
+  latent_channels: 256
+  out_block_type: AdaptiveOutputConvLayer
+  in_block_type: AdaptiveInputConvLayer
+  out_shortcut: null
+  in_shortcut: null
+  enc_width: [128, 256, 512, 512, 512, 512]
+  enc_depth: [1, 1, 1, 1, 1, 1]
+  dec_depth: [1, 1, 1, 1, 1, 1]
+  downsample_factors: [[1,2,2], [1,2,2], [1,2,2], [2,2,2], [2,2,2]]

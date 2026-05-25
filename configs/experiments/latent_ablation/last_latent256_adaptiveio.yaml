@@ -1,0 +1,41 @@
+dims: "3d"
+
+experiment:
+  name: "last_latent256_adaptiveio"
+
+paths:
+  save_dir: "/cluster/home/kostfab1/DC-Gen/latent_ablation"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/latent_ablation/last_latent256_adaptiveio"
+
+training:
+  max_steps: 125000
+  seed: 1
+  num_epochs: 350
+  batch_size: 4
+  resume_from_checkpoint: false
+  load_optimizer_state: false
+  checkpoint_every: 2500
+  max_checkpoints: 4
+
+pipeline:
+  resize_hw: [256, 256]
+  normalize_input_range: [-1000, 1000]
+
+hparams:
+  learning_rate: 2e-5
+
+objective:
+  loss_fn: "l1"
+  ssim_weight: 0.3
+  grad_weight: 0.2
+  gan_weight: 0.0
+
+logging:
+  wandb: true
+  wandb_project: "ae_last_latent_adaptive_ablation"
+  wandb_group: "last_aniso_seed1"
+  wandb_resume_run: false
+  save_volumes: true
+  viz_every: 1000
+  validate_every: 2500
+  print_model_arch: false

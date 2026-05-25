@@ -1,0 +1,85 @@
+#!/bin/bash
+
+#SBATCH --account=cai_ivs
+#SBATCH --partition=gpu_top
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --time=24:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --array=0-1
+#SBATCH --job-name=last_adaptive_extra
+
+#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/slurm/%A_%a.out
+#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/slurm/%A_%a.err
+#SBATCH --chdir=/cluster/home/kostfab1/DC-Gen/
+#SBATCH --signal=B:SIGUSR1@90
+#SBATCH --requeue
+#SBATCH --open-mode=append
+
+CONFIGS=(
+  configs/experiments/latent_ablation/last_latent64_adaptiveio.yaml
+  configs/experiments/latent_ablation/last_latent256_adaptiveio.yaml
+)
+
+MODELS=(
+  last_latent64_adaptiveio
+  last_latent256_adaptiveio
+)
+
+CONFIG=${CONFIGS[$SLURM_ARRAY_TASK_ID]}
+MODEL=${MODELS[$SLURM_ARRAY_TASK_ID]}
+
+handle_signal() {
+  echo "STOP SIGNAL DETECTED - REQUEUING JOB"
+
+  if [ -n "$child_pid" ]; then
+    kill -INT "$child_pid"
+    sleep 10
+    if kill -0 "$child_pid" 2>/dev/null; then
+      kill -KILL "$child_pid"
+    fi
+  fi
+
+  scontrol requeue "$SLURM_JOB_ID"
+  exit 0
+}
+trap 'handle_signal' USR1
+
+echo "Running on $(hostname)"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Array task: $SLURM_ARRAY_TASK_ID"
+echo "Config: $CONFIG"
+echo "Model: $MODEL"
+echo "Starting at $(date)"
+
+module load cuda/13.2.0
+
+source /cluster/home/kostfab1/dev2/bin/activate
+
+NUM_GPUS=${SLURM_GPUS_ON_NODE:-1}
+
+for port in 8972 8973 8974 8975; do
+  if ! ss -tuln | grep -q ":$port "; then
+    MASTER_PORT=$port
+    break
+  fi
+done
+
+if [ -z "$MASTER_PORT" ]; then
+  echo "No free port found in range"
+  exit 1
+fi
+
+export MASTER_PORT
+export MASTER_ADDR=$(hostname)
+
+python3 -c "from config import load_config; cfg = load_config(yaml_path='$CONFIG', model='$MODEL'); print('Config preflight OK', cfg.experiment.name, 'model=', '$MODEL', 'max_steps=', cfg.training.max_steps, 'wandb_project=', cfg.logging.wandb_project, 'resume=', cfg.training.resume_from_checkpoint)"
+
+OMP_NUM_THREADS=1 torchrun \
+  --nproc_per_node=$NUM_GPUS \
+  --master_port=$MASTER_PORT \
+  structure.py --config $CONFIG --model $MODEL &
+
+child_pid=$!
+wait $child_pid
