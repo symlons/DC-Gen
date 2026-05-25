@@ -57,6 +57,8 @@ class ObjectiveConfig:
 @dataclass
 class TrainingConfig:
     num_epochs: int = 350
+    max_steps: Optional[int] = None
+    seed: Optional[int] = None
     batch_size: int = 4
     shuffle_data: bool = True
     num_workers: int = 32
@@ -90,6 +92,8 @@ class ModelConfig:
 @dataclass
 class LoggingConfig:
     wandb: bool = False
+    wandb_project: str = "ae_v1"
+    wandb_group: Optional[str] = None
     wandb_resume_run: bool = True
     save_volumes: bool = True
     viz_every: int = 500

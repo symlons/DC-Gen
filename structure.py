@@ -2,6 +2,9 @@ import torch
 import wandb
 import argparse
 import logging
+import random
+
+import numpy as np
 import os
 import re
 import signal
@@ -79,6 +82,14 @@ def main_worker(rank: int, world_size: int, cfg):
     if use_cuda: torch.cuda.set_device(rank)
     if use_cuda and world_size > 1: init_distributed(rank, world_size)
 
+    seed = getattr(cfg.training, "seed", None)
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        if use_cuda:
+            torch.cuda.manual_seed_all(seed)
+
     exp_name = cfg.experiment.name
     log_dir = os.path.join(cfg.paths.save_dir, exp_name, "logs")
     viz_dir = os.path.join(cfg.paths.save_dir, exp_name, "viz")
@@ -88,7 +99,12 @@ def main_worker(rank: int, world_size: int, cfg):
         git_info = get_git_info()
         cfg_dict = vars(cfg)
         cfg_dict.update(git_info)
-        wandb.init(project="ae_v1", name=cfg.experiment.name, config=cfg_dict)
+        wandb.init(
+            project=cfg.logging.wandb_project,
+            name=cfg.experiment.name,
+            group=cfg.logging.wandb_group,
+            config=cfg_dict,
+        )
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         print_config_summary(cfg, device)
 
@@ -174,8 +190,9 @@ def main_worker(rank: int, world_size: int, cfg):
 
     checkpoint_queue = deque()
     num_epochs = cfg.training.num_epochs
+    max_steps = getattr(cfg.training, "max_steps", None)
 
-    rank0_print(f"[setup] Starting training loop (global_step={global_step})...")
+    rank0_print(f"[setup] Starting training loop (global_step={global_step}, max_steps={max_steps})...")
     for epoch in range(num_epochs):
         if _shutdown_requested:
             rank0_print(f"\n[{rank}] Shutdown requested, exiting training loop")
@@ -189,6 +206,9 @@ def main_worker(rank: int, world_size: int, cfg):
         for i, batch in enumerate(loader):
             if _shutdown_requested:
                 rank0_print(f"\n[{rank}] Shutdown requested, finishing epoch")
+                break
+            if max_steps is not None and global_step >= max_steps:
+                rank0_print(f"[setup] Reached max_steps={max_steps}, stopping training loop")
                 break
             if i == 0: rank0_print(f"  batch shape: {batch.shape}")
             save_diff = (cfg.logging.save_volumes and global_step % cfg.logging.viz_every == 0)
@@ -259,6 +279,8 @@ def main_worker(rank: int, world_size: int, cfg):
                 if is_main_process(): save_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, global_step, checkpoint_queue, cfg.training.max_checkpoints, ema_model=ema_model)
                 barrier()
             global_step += 1
+        if max_steps is not None and global_step >= max_steps:
+            break
 
     rank0_print(f"\n[{rank}] Finalizing training...")
     if log_metrics and wandb.run is not None: wandb.finish()
