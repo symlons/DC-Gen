@@ -18,17 +18,20 @@ def make_dataset(cfg, split: str):
         seed=cfg.dataset.seed,
     )
 
-def make_dataloader(dataset, cfg, batch_size=None, sampler=None, shuffle=False):
+def make_dataloader(dataset, cfg, batch_size=None, sampler=None, shuffle=False, drop_last=None):
     if dataset is None: return None
 
     batch_size = batch_size or cfg.training.batch_size
     num_workers = cfg.training.num_workers
+    if drop_last is None:
+        drop_last = getattr(cfg.training, "drop_last", False) and sampler is None
 
     return DataLoader(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
         shuffle=shuffle and sampler is None,
+        drop_last=drop_last,
         num_workers=num_workers,
         persistent_workers=cfg.training.persistent_workers if num_workers > 0 else False,
         pin_memory=cfg.training.pin_memory,

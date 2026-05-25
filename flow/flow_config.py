@@ -45,6 +45,7 @@ class TrainingConfig:
     num_epochs: int = 350
     batch_size: int = 2
     shuffle_data: bool = True
+    drop_last: bool = False
     num_workers: int = 8
     persistent_workers: bool = True
     pin_memory: bool = True

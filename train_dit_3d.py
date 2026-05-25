@@ -87,7 +87,7 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
     val_dataset = make_dataset(cfg, "val")
     sampler = (DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True if use_ddp else cfg.training.shuffle_data) if use_ddp else None)
     train_loader = make_dataloader(train_dataset, cfg, sampler=sampler, shuffle=not use_ddp and cfg.training.shuffle_data)
-    val_loader = make_dataloader(val_dataset, cfg, batch_size=min(len(val_dataset), max(1, cfg.sampling.batch_size)))
+    val_loader = make_dataloader(val_dataset, cfg, batch_size=min(len(val_dataset), max(1, cfg.sampling.batch_size)), drop_last=False)
     in_channels, spatial_shape = infer_latent_shape(
         train_dataset,
         expected_in_channels=cfg.model.in_channels,

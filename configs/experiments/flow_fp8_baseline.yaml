@@ -34,6 +34,7 @@ training:
   num_epochs: 3500
   batch_size: 1024
   shuffle_data: true
+  drop_last: true
   num_workers: 8
   persistent_workers: true
   pin_memory: true
