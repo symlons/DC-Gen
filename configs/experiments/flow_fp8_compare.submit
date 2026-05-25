@@ -44,11 +44,12 @@ echo "Job ID: $SLURM_JOB_ID task $SLURM_ARRAY_TASK_ID"
 echo "Experiment: $EXPERIMENT"
 echo "Starting at $(date)"
 
-module load cuda/12.9.1
+module load cuda/13.2.0
 source /cluster/home/kostfab1/dev2/bin/activate
 export PYTHONPATH=/cluster/home/kostfab1/DC-Gen/compat:${PYTHONPATH:-}
 mkdir -p /cluster/home/kostfab1/DC-Gen/logs/flow_fp8_tweo_compare
 
+python3 -c "import torch; assert torch.cuda.is_available(), \"CUDA not visible\"; print(\"CUDA visible\", torch.cuda.get_device_name(0), \"count=\", torch.cuda.device_count())"
 python3 -c "import transformer_engine.pytorch as te; from transformer_engine.common.recipe import DelayedScaling, Format; print('Transformer Engine preflight OK', te.__name__)"
 python3 -c "from train_dit_3d import load_config; cfg = load_config('$EXPERIMENT'); print('Config preflight OK', cfg.experiment.name, 'tweo=', cfg.tweo.enabled, 'wandb_project=', cfg.logging.wandb_project)"
 
