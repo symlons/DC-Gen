@@ -78,6 +78,13 @@ class TWEOConfig:
 
 
 @dataclass
+class AdaptiveLatentConfig:
+    enabled: bool = False
+    min_channels: int = 16
+    step: int = 4
+
+
+@dataclass
 class TransformerEngineConfig:
     enabled: bool = False
     replace_linears: bool = True
@@ -156,6 +163,7 @@ class TrainDiT3DConfig:
     objective: ObjectiveConfig = field(default_factory=ObjectiveConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     tweo: TWEOConfig = field(default_factory=TWEOConfig)
+    adaptive_latent: AdaptiveLatentConfig = field(default_factory=AdaptiveLatentConfig)
     transformer_engine: TransformerEngineConfig = field(default_factory=TransformerEngineConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     sampling: SamplingConfig = field(default_factory=SamplingConfig)

@@ -126,6 +126,9 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
         tweo_eps=cfg.tweo.eps,
         tweo_schedule=cfg.tweo.schedule,
         log_block_activations=cfg.tweo.log_activations,
+        adaptive_latent_enabled=cfg.adaptive_latent.enabled,
+        adaptive_latent_min_channels=cfg.adaptive_latent.min_channels,
+        adaptive_latent_step=cfg.adaptive_latent.step,
         max_steps=len(train_loader) * cfg.training.num_epochs,
     )
     inspector = ModelInspector(
@@ -180,6 +183,7 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
                     "tweo_weight": outputs["tweo_weight"].item(),
                     "block_abs_max": outputs["block_activation_abs_max"].item(),
                     "block_abs_mean": outputs["block_activation_abs_mean"].item(),
+                    "latent_c_prime": outputs["latent_c_prime"].item(),
                     "t_mean": outputs["t"].float().mean().item(),
                     "grad_norm": grad_norm,
                 }
@@ -192,6 +196,7 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
                         "tweo/weight": outputs["tweo_weight"].item(),
                         "activations/block_abs_max": outputs["block_activation_abs_max"].item(),
                         "activations/block_abs_mean": outputs["block_activation_abs_mean"].item(),
+                        "adaptive_latent/c_prime": outputs["latent_c_prime"].item(),
                         "timestep/mean": outputs["t"].float().mean().item(),
                         "train/grad_norm": grad_norm,
                         **tensor_stats_dict("latent", batch["image"]),
@@ -207,7 +212,7 @@ def main_worker(rank: int, world_size: int, cfg: TrainDiT3DConfig):
                     autoencoder.to(device)
                     val_metrics = run_validation(
                         eval_model, val_loader, device, model_dtype, cfg,
-                        forward_fn=lambda m, x: objective.compute_loss(m, x["image"], global_step=global_step)["x1_pred"],
+                        forward_fn=lambda m, x: objective.compute_loss(m, x["image"], global_step=global_step, use_adaptive_latent=False)["x1_pred"],
                         decode_fn=lambda z: autoencoder.decode(z.to(device)).to(device),
                         global_step=global_step,
                         log_metrics=cfg.logging.wandb,

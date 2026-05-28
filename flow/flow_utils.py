@@ -42,6 +42,7 @@ def print_config_summary(cfg: TrainDiT3DConfig, device: torch.device, in_channel
          ("Objective", f"Rectified Flow ({cfg.objective.mode})"),
          ("Objective Beta", f"({cfg.objective.beta_a}, {cfg.objective.beta_b})"),
          ("TWEO", f"{cfg.tweo.enabled} (weight={cfg.tweo.weight}, tau={cfg.tweo.tau}, p={cfg.tweo.power}, schedule={cfg.tweo.schedule})"),
+         ("Adaptive Latent", f"{cfg.adaptive_latent.enabled} (min={cfg.adaptive_latent.min_channels}, step={cfg.adaptive_latent.step})"),
          ("Transformer Engine", f"{cfg.transformer_engine.enabled} (fp8={cfg.transformer_engine.fp8_autocast}, format={cfg.transformer_engine.recipe_format}, amax={cfg.transformer_engine.amax_history_len})"),
          ("Epochs", cfg.training.num_epochs),
          ("Batch Size", cfg.training.batch_size),
@@ -108,6 +109,10 @@ def validate_and_finalize_config(cfg: TrainDiT3DConfig) -> TrainDiT3DConfig:
         raise ValueError("tweo.eps must be non-negative.")
     if cfg.tweo.schedule not in {"constant", "cosine"}:
         raise ValueError("tweo.schedule must be one of ['constant', 'cosine'].")
+    if cfg.adaptive_latent.min_channels <= 0:
+        raise ValueError("adaptive_latent.min_channels must be positive.")
+    if cfg.adaptive_latent.step <= 0:
+        raise ValueError("adaptive_latent.step must be positive.")
     if cfg.transformer_engine.recipe_format not in {"E4M3", "E5M2", "HYBRID"}:
         raise ValueError("transformer_engine.recipe_format must be one of ['E4M3', 'E5M2', 'HYBRID'].")
     if cfg.transformer_engine.amax_history_len <= 0:

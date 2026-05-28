@@ -51,7 +51,7 @@ mkdir -p /cluster/home/kostfab1/DC-Gen/logs/flow_fp8_tweo_compare
 
 python3 -c "import torch; assert torch.cuda.is_available(), \"CUDA not visible\"; print(\"CUDA visible\", torch.cuda.get_device_name(0), \"count=\", torch.cuda.device_count())"
 python3 -c "import transformer_engine.pytorch as te; from transformer_engine.common.recipe import DelayedScaling, Format; print('Transformer Engine preflight OK', te.__name__)"
-python3 -c "from train_dit_3d import load_config; cfg = load_config('$EXPERIMENT'); print('Config preflight OK', cfg.experiment.name, 'tweo=', cfg.tweo.enabled, 'wandb_project=', cfg.logging.wandb_project)"
+python3 -c "from train_dit_3d import load_config; cfg = load_config('$EXPERIMENT'); assert cfg.transformer_engine.enabled and cfg.transformer_engine.replace_linears and cfg.transformer_engine.fp8_autocast, cfg.transformer_engine; print('Config preflight OK', cfg.experiment.name, 'tweo=', cfg.tweo.enabled, 'te=', cfg.transformer_engine.enabled, 'replace_linears=', cfg.transformer_engine.replace_linears, 'fp8=', cfg.transformer_engine.fp8_autocast, 'wandb_project=', cfg.logging.wandb_project)"
 
 python3 train_dit_3d.py --experiment "$EXPERIMENT" &
 child_pid=$!

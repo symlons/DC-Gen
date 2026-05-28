@@ -27,6 +27,9 @@ class RectifiedFlowObjective:
         tweo_eps: float = 1e-6,
         tweo_schedule: str = "constant",
         log_block_activations: bool = True,
+        adaptive_latent_enabled: bool = False,
+        adaptive_latent_min_channels: int = 16,
+        adaptive_latent_step: int = 4,
         max_steps: int | None = None,
     ):
         self.device = device
@@ -45,6 +48,9 @@ class RectifiedFlowObjective:
         self.tweo_eps = tweo_eps
         self.tweo_schedule = tweo_schedule
         self.log_block_activations = log_block_activations
+        self.adaptive_latent_enabled = adaptive_latent_enabled
+        self.adaptive_latent_min_channels = adaptive_latent_min_channels
+        self.adaptive_latent_step = adaptive_latent_step
         self.max_steps = max_steps
 
     def sample_t(self, batch_size: int) -> torch.Tensor:
@@ -90,7 +96,32 @@ class RectifiedFlowObjective:
             "block_activation_abs_mean": torch.stack([activation.mean() for activation in abs_activations]).mean(),
         }
 
-    def compute_loss(self, model: nn.Module, images: torch.Tensor, global_step: int | None = None) -> dict[str, torch.Tensor]:
+    def sample_latent_channel_mask(self, like: torch.Tensor) -> tuple[torch.Tensor | None, torch.Tensor]:
+        if not self.adaptive_latent_enabled:
+            return None, like.new_tensor(like.shape[1])
+        channels = like.shape[1]
+        min_channels = min(self.adaptive_latent_min_channels, channels)
+        possible = torch.arange(min_channels, channels + 1, self.adaptive_latent_step, device=like.device)
+        if possible[-1] != channels:
+            possible = torch.cat([possible, possible.new_tensor([channels])])
+        c_prime = possible[torch.randint(0, possible.shape[0], (1,), device=like.device)]
+        channel_idx = torch.arange(channels, device=like.device).view(1, channels, *([1] * (like.dim() - 2)))
+        return (channel_idx < c_prime).to(like.dtype), c_prime.to(like.dtype)
+
+    def masked_mse_loss(self, pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+        if mask is None:
+            return F.mse_loss(pred, target)
+        active = mask.sum().clamp_min(1.0)
+        spatial = pred[0, :1].numel()
+        return ((pred - target).pow(2) * mask).sum() / (active * spatial * pred.shape[0])
+
+    def compute_loss(
+        self,
+        model: nn.Module,
+        images: torch.Tensor,
+        global_step: int | None = None,
+        use_adaptive_latent: bool = True,
+    ) -> dict[str, torch.Tensor]:
         batch_size = images.shape[0]
         t = self.sample_t(batch_size)
         t_view = t.view(batch_size, 1, 1, 1, 1)
@@ -100,6 +131,9 @@ class RectifiedFlowObjective:
 
         noise = torch.randn_like(images_normalized)
         x_t = t_view * images_normalized + (1.0 - t_view) * noise
+        latent_mask, latent_c_prime = self.sample_latent_channel_mask(images_normalized) if use_adaptive_latent else (None, images_normalized.new_tensor(images_normalized.shape[1]))
+        if latent_mask is not None:
+            x_t = x_t * latent_mask
         labels = make_unconditional_labels(batch_size, images.device)
 
         return_block_activations = self.tweo_enabled or self.log_block_activations
@@ -111,7 +145,10 @@ class RectifiedFlowObjective:
 
         v_pred = model_output[:, : images_normalized.shape[1]]
         target_v = images_normalized - noise
-        flow_loss = F.mse_loss(v_pred, target_v)
+        flow_loss = self.masked_mse_loss(v_pred, target_v, latent_mask)
+        if latent_mask is not None:
+            v_pred = v_pred * latent_mask
+            target_v = target_v * latent_mask
         tweo_loss = self.compute_tweo_loss(block_activations) if self.tweo_enabled else flow_loss.new_zeros(())
         tweo_weight = self.tweo_lambda(global_step)
         loss = flow_loss + tweo_weight * tweo_loss
@@ -129,4 +166,5 @@ class RectifiedFlowObjective:
             "target_v": target_v, # ground truth
             "v_pred": v_pred, # models velocity prediction
             "x1_pred": x_t + (1.0 - t_view) * v_pred, # "reconstruction"
+            "latent_c_prime": latent_c_prime,
         }
