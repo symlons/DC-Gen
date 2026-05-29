@@ -6,6 +6,23 @@ from .logging_utils import format_kv_block
 from multigpu import rank0_print
 
 DTYPE_NAME_MAP = {"float32": "fp32", "float16": "fp16", "bfloat16": "bf16"}
+PROJECT_ARTIFACT_ROOT = os.environ.get(
+    "DC_GEN_ARTIFACT_ROOT",
+    "/cluster/projects/2025_stmd_VT_diff",
+)
+ARTIFACT_PATH_REWRITES = {
+    "/cluster/home/kostfab1/DC-Gen": os.path.join(PROJECT_ARTIFACT_ROOT, "DC-Gen"),
+    "/cluster/home/kostfab1/DC-GEN": os.path.join(PROJECT_ARTIFACT_ROOT, "DC-GEN"),
+}
+
+
+def redirect_artifact_path(path: str | None) -> str | None:
+    if not path:
+        return path
+    for home_prefix, project_prefix in ARTIFACT_PATH_REWRITES.items():
+        if path == home_prefix or path.startswith(home_prefix + os.sep):
+            return project_prefix + path[len(home_prefix):]
+    return path
 
 def _resolve_autocast_dtype(cfg, device):
     requested_dtype = getattr(cfg.training, "autocast_dtype", "auto")
@@ -118,13 +135,22 @@ def validate_and_finalize_config(cfg: TrainDiT3DConfig) -> TrainDiT3DConfig:
     if cfg.transformer_engine.amax_history_len <= 0:
         raise ValueError("transformer_engine.amax_history_len must be positive.")
 
+    cfg.paths.checkpoint_root_dir = redirect_artifact_path(cfg.paths.checkpoint_root_dir)
+    cfg.paths.save_root_dir = redirect_artifact_path(cfg.paths.save_root_dir)
+    if cfg.paths.save_root_dir is None:
+        cfg.paths.save_root_dir = os.path.join(PROJECT_ARTIFACT_ROOT, "DC-Gen", "flow_runs")
+
     cfg.paths.checkpoint_dir = cfg.paths.checkpoint_dir or os.path.join(
         cfg.paths.checkpoint_root_dir, "flow_matching", cfg.experiment.name
     )
     cfg.paths.save_dir = cfg.paths.save_dir or os.path.join(
         cfg.paths.save_root_dir, "flow", cfg.experiment.name
     )
+    cfg.paths.checkpoint_dir = redirect_artifact_path(cfg.paths.checkpoint_dir)
+    cfg.paths.save_dir = redirect_artifact_path(cfg.paths.save_dir)
+    cfg.training.resume_from_checkpoint_path = redirect_artifact_path(cfg.training.resume_from_checkpoint_path)
     cfg.dataset.train_dir = cfg.dataset.train_dir or cfg.paths.latent_train_dir
     cfg.dataset.val_dir = cfg.dataset.val_dir or cfg.paths.latent_val_dir
     cfg.sampling.output_dir = cfg.sampling.output_dir or os.path.join(cfg.paths.save_dir, "samples")
+    cfg.sampling.output_dir = redirect_artifact_path(cfg.sampling.output_dir)
     return cfg

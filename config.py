@@ -5,6 +5,23 @@ import torch
 from omegaconf import OmegaConf
 
 experiment_dirs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "experiments")
+PROJECT_ARTIFACT_ROOT = os.environ.get(
+    "DC_GEN_ARTIFACT_ROOT",
+    "/cluster/projects/2025_stmd_VT_diff",
+)
+ARTIFACT_PATH_REWRITES = {
+    "/cluster/home/kostfab1/DC-Gen": os.path.join(PROJECT_ARTIFACT_ROOT, "DC-Gen"),
+    "/cluster/home/kostfab1/DC-GEN": os.path.join(PROJECT_ARTIFACT_ROOT, "DC-GEN"),
+}
+
+
+def redirect_artifact_path(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return path
+    for home_prefix, project_prefix in ARTIFACT_PATH_REWRITES.items():
+        if path == home_prefix or path.startswith(home_prefix + os.sep):
+            return project_prefix + path[len(home_prefix):]
+    return path
 
 @dataclass
 class DatasetConfig:
@@ -161,6 +178,9 @@ def validate_and_finalize_config(cfg):
             raise ValueError(f"3D config should use a 3D model variant, got: {cfg.model.name}")
         if cfg.pipeline.n_slices is None and cfg.pipeline.resize_depth is None:
             raise ValueError("3D config must set pipeline.n_slices or pipeline.resize_depth")
+
+    cfg.paths.save_dir = redirect_artifact_path(cfg.paths.save_dir)
+    cfg.paths.checkpoint_dir = redirect_artifact_path(cfg.paths.checkpoint_dir)
 
     if not cfg.paths.save_dir or not cfg.paths.checkpoint_dir:
         raise ValueError(f"No paths configured for model {cfg.model.name!r}. "
