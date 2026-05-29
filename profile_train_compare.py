@@ -47,8 +47,35 @@ def percentile(values, q):
     return float(np.percentile(np.array(values, dtype=np.float64), q))
 
 
-def run_variant(label: str, config_path: str, warmup: int, timed: int, max_batches: int | None):
+def parse_spatial_shape(value: str) -> tuple[int, int, int]:
+    value = value.strip().replace("[", "").replace("]", "").replace("x", ",")
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    if len(parts) != 3:
+        raise ValueError(f"Expected spatial shape with 3 dims, got {value!r}")
+    shape = tuple(int(part) for part in parts)
+    if any(dim <= 0 for dim in shape):
+        raise ValueError(f"Spatial shape dims must be positive, got {shape}")
+    return shape
+
+
+def shape_label(spatial_shape: tuple[int, int, int] | None) -> str:
+    if spatial_shape is None:
+        return "dataset"
+    return "x".join(str(dim) for dim in spatial_shape)
+
+
+def run_variant(
+    label: str,
+    config_path: str,
+    warmup: int,
+    timed: int,
+    max_batches: int | None,
+    synthetic_shape: tuple[int, int, int] | None = None,
+    batch_size_override: int | None = None,
+):
     cfg = load_config(config_path)
+    if batch_size_override is not None:
+        cfg.training.batch_size = batch_size_override
     device = resolve_device(0)
     model_dtype = torch_dtype(cfg.training.dtype)
 
@@ -56,13 +83,21 @@ def run_variant(label: str, config_path: str, warmup: int, timed: int, max_batch
     if device.type == "cuda":
         torch.cuda.manual_seed_all(1234)
 
-    train_dataset = make_dataset(cfg, "train")
-    loader = make_dataloader(train_dataset, cfg, sampler=None, shuffle=False)
-    in_channels, spatial_shape = infer_latent_shape(
-        train_dataset,
-        expected_in_channels=cfg.model.in_channels,
-        expected_input_size=tuple(cfg.model.input_size) if cfg.model.input_size else None,
-    )
+    train_dataset = None
+    loader = None
+    if synthetic_shape is None:
+        train_dataset = make_dataset(cfg, "train")
+        loader = make_dataloader(train_dataset, cfg, sampler=None, shuffle=False)
+        in_channels, spatial_shape = infer_latent_shape(
+            train_dataset,
+            expected_in_channels=cfg.model.in_channels,
+            expected_input_size=tuple(cfg.model.input_size) if cfg.model.input_size else None,
+        )
+        max_steps = len(loader) * cfg.training.num_epochs
+    else:
+        in_channels = cfg.model.in_channels
+        spatial_shape = synthetic_shape
+        max_steps = None
 
     model = build_model(cfg, in_channels).to(device=device, dtype=model_dtype)
     fp8_recipe = None
@@ -97,7 +132,7 @@ def run_variant(label: str, config_path: str, warmup: int, timed: int, max_batch
         adaptive_latent_enabled=cfg.adaptive_latent.enabled,
         adaptive_latent_min_channels=cfg.adaptive_latent.min_channels,
         adaptive_latent_step=cfg.adaptive_latent.step,
-        max_steps=len(loader) * cfg.training.num_epochs,
+        max_steps=max_steps,
     )
 
     total_needed = warmup + timed
@@ -107,7 +142,7 @@ def run_variant(label: str, config_path: str, warmup: int, timed: int, max_batch
         raise ValueError("Need at least one timed batch")
     timed_steps = total_needed - warmup
 
-    data_iter = iter(loader)
+    data_iter = iter(loader) if loader is not None else None
     rows = []
 
     if device.type == "cuda":
@@ -116,13 +151,22 @@ def run_variant(label: str, config_path: str, warmup: int, timed: int, max_batch
         torch.cuda.synchronize()
 
     for step_idx in range(total_needed):
-        try:
-            batch = next(data_iter)
-        except StopIteration:
-            data_iter = iter(loader)
-            batch = next(data_iter)
-
-        batch = move_batch(batch, device, model_dtype)
+        if synthetic_shape is None:
+            assert data_iter is not None and loader is not None
+            try:
+                batch = next(data_iter)
+            except StopIteration:
+                data_iter = iter(loader)
+                batch = next(data_iter)
+            batch = move_batch(batch, device, model_dtype)
+        else:
+            batch = {
+                "image": torch.randn(
+                    (cfg.training.batch_size, in_channels, *synthetic_shape),
+                    device=device,
+                    dtype=model_dtype,
+                )
+            }
         if device.type == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
@@ -223,6 +267,8 @@ def run_variant(label: str, config_path: str, warmup: int, timed: int, max_batch
         "peak_mem_reserved_gib": float(torch.cuda.max_memory_reserved() / 1024**3) if device.type == "cuda" else None,
         "device": str(device),
         "gpu_name": torch.cuda.get_device_name(0) if device.type == "cuda" else None,
+        "profile_case": shape_label(synthetic_shape),
+        "synthetic": synthetic_shape is not None,
         "spatial_shape": list(spatial_shape),
         "in_channels": int(in_channels),
     }
@@ -241,24 +287,54 @@ def main():
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--timed", type=int, default=10)
     parser.add_argument("--max-batches", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument(
+        "--synthetic-shapes",
+        nargs="*",
+        default=None,
+        help="Optional D,H,W latent shapes to profile with synthetic batches, e.g. 8,16,16 16,16,16.",
+    )
     parser.add_argument("--out", default="logs/profile_train_compare/results.json")
     args = parser.parse_args()
 
     results = []
-    results.append(run_variant("fp8_tweo_te", args.fp8_tweo_config, args.warmup, args.timed, args.max_batches))
-    results.append(run_variant("bf16_baseline", args.bf16_config, args.warmup, args.timed, args.max_batches))
+    synthetic_shapes = None
+    if args.synthetic_shapes:
+        synthetic_shapes = [parse_spatial_shape(value) for value in args.synthetic_shapes]
+    cases = synthetic_shapes or [None]
+    comparisons = []
+    for spatial_shape in cases:
+        case = shape_label(spatial_shape)
+        fp8_result = run_variant(
+            "fp8_tweo_te",
+            args.fp8_tweo_config,
+            args.warmup,
+            args.timed,
+            args.max_batches,
+            synthetic_shape=spatial_shape,
+            batch_size_override=args.batch_size,
+        )
+        bf16_result = run_variant(
+            "bf16_baseline",
+            args.bf16_config,
+            args.warmup,
+            args.timed,
+            args.max_batches,
+            synthetic_shape=spatial_shape,
+            batch_size_override=args.batch_size,
+        )
+        results.extend([fp8_result, bf16_result])
+        comparisons.append({
+            "profile_case": case,
+            "fp8_tweo_vs_bf16_speedup": bf16_result["step_ms_mean"] / fp8_result["step_ms_mean"],
+            "fp8_tweo_step_ms_delta_pct": (fp8_result["step_ms_mean"] / bf16_result["step_ms_mean"] - 1.0) * 100.0,
+            "fp8_tweo_mem_alloc_delta_pct": (fp8_result["peak_mem_alloc_gib"] / bf16_result["peak_mem_alloc_gib"] - 1.0) * 100.0,
+            "fp8_tweo_mem_reserved_delta_pct": (fp8_result["peak_mem_reserved_gib"] / bf16_result["peak_mem_reserved_gib"] - 1.0) * 100.0,
+        })
 
-    by_label = {r["label"]: r for r in results}
-    fp8 = by_label["fp8_tweo_te"]
-    bf16 = by_label["bf16_baseline"]
-    comparison = {
-        "fp8_tweo_vs_bf16_speedup": bf16["step_ms_mean"] / fp8["step_ms_mean"],
-        "fp8_tweo_step_ms_delta_pct": (fp8["step_ms_mean"] / bf16["step_ms_mean"] - 1.0) * 100.0,
-        "fp8_tweo_mem_alloc_delta_pct": (fp8["peak_mem_alloc_gib"] / bf16["peak_mem_alloc_gib"] - 1.0) * 100.0,
-        "fp8_tweo_mem_reserved_delta_pct": (fp8["peak_mem_reserved_gib"] / bf16["peak_mem_reserved_gib"] - 1.0) * 100.0,
-    }
-
-    payload = {"results": results, "comparison": comparison}
+    payload = {"results": results, "comparisons": comparisons}
+    if len(comparisons) == 1:
+        payload["comparison"] = comparisons[0]
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2) + "\n")

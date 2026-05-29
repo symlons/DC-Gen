@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:h200sxm:1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --job-name=prof_fp8_bf16
@@ -23,4 +23,13 @@ python3 profile_train_compare.py \
   --bf16-config configs/experiments/flow_bf16_baseline.yaml \
   --warmup 3 \
   --timed 10 \
-  --out logs/profile_train_compare/results_${SLURM_JOB_ID}.json
+  --out logs/profile_train_compare/results_${SLURM_JOB_ID}_dataset.json
+
+python3 profile_train_compare.py \
+  --fp8-tweo-config configs/experiments/flow_fp8_tweo.yaml \
+  --bf16-config configs/experiments/flow_bf16_baseline.yaml \
+  --synthetic-shapes 8,16,16 16,16,16 \
+  --batch-size 1 \
+  --warmup 1 \
+  --timed 3 \
+  --out logs/profile_train_compare/results_${SLURM_JOB_ID}_spatial.json
