@@ -236,7 +236,7 @@ def run_variant(label: str, config_path: str, warmup: int, timed: int, max_batch
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--fp8-tweo-config", default="/cluster/home/kostfab1/DC-GEN/job_submits/flow_fp8_tweo_resume.yaml")
+    parser.add_argument("--fp8-tweo-config", default="configs/experiments/flow_fp8_tweo.yaml")
     parser.add_argument("--bf16-config", default="configs/experiments/flow_bf16_baseline.yaml")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--timed", type=int, default=10)

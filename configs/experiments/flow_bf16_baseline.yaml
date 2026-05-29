@@ -1,6 +1,6 @@
 dims: "3d"
 experiment:
-  name: "dit_3d_recflow_fp8_tweo"
+  name: "dit_3d_recflow_bf16_baseline"
 
 dataset:
   train_dir: null
@@ -13,8 +13,8 @@ dataset:
 
 paths:
   hdf_path: "/data/ct_rate_train_batch_0_v13.hdf"
-  checkpoint_root_dir: "/cluster/home/kostfab1/DC-Gen/checkpoints/flow_fp8_tweo_compare/tweo"
-  save_root_dir: "/cluster/home/kostfab1/DC-Gen/flow_fp8_tweo_compare/tweo"
+  checkpoint_root_dir: "/cluster/home/kostfab1/DC-Gen/checkpoints/flow_bf16_baseline"
+  save_root_dir: "/cluster/home/kostfab1/DC-Gen/flow_bf16_baseline"
   latent_train_dir: "/cluster/projects/2025_stmd_VT_diff/latents/latents_v04_shallow_phase1_train_v2"
   latent_val_dir: "/cluster/projects/2025_stmd_VT_diff/latents/latents_v04_shallow_phase1_valid_v2"
   nifti_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
@@ -40,7 +40,7 @@ training:
   pin_memory: true
   prefetch_factor: null
   dtype: "float32"
-  autocast_dtype: "auto"
+  autocast_dtype: "bfloat16"
   use_autocast: true
   compile: true
   learning_rate: 2e-4
@@ -55,7 +55,7 @@ training:
   ema_warmup_steps: 2000
 
 tweo:
-  enabled: true
+  enabled: false
   weight: 0.01
   tau: 3.0
   power: 4.0
@@ -64,9 +64,9 @@ tweo:
   log_activations: true
 
 transformer_engine:
-  enabled: true
-  replace_linears: true
-  fp8_autocast: true
+  enabled: false
+  replace_linears: false
+  fp8_autocast: false
   recipe_format: "HYBRID"
   amax_history_len: 16
   amax_compute_algo: "max"
@@ -98,8 +98,8 @@ sampling:
 
 logging:
   wandb: true
-  wandb_project: "ct_dit_3d_fp8_tweo_comparison"
-  wandb_group: "fp8_tweo_vs_baseline_dit_l"
+  wandb_project: "ct_dit_3d_precision_baselines"
+  wandb_group: "bf16_vs_fp8_baseline_dit_l"
   validate_every: 1000
   max_val_batches: null
   save_samples: true
