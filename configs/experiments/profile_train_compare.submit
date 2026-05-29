@@ -1,0 +1,26 @@
+#!/bin/bash
+#SBATCH --account=cai_ivs
+#SBATCH --partition=gpu_top
+#SBATCH --gres=gpu:h200sxm:1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --job-name=prof_fp8_bf16
+#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/profile_train_compare/%x_%j.out
+#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/profile_train_compare/%x_%j.err
+#SBATCH --chdir=/cluster/home/kostfab1/DC-Gen/
+
+set -euo pipefail
+module load cuda/13.2.0
+source /cluster/home/kostfab1/dev2/bin/activate
+export PYTHONPATH=/cluster/home/kostfab1/DC-Gen/compat:${PYTHONPATH:-}
+mkdir -p /cluster/home/kostfab1/DC-Gen/logs/profile_train_compare
+python3 -c "import torch; assert torch.cuda.is_available(); print('CUDA', torch.cuda.get_device_name(0), torch.cuda.device_count())"
+python3 profile_train_compare.py \
+  --fp8-tweo-config /cluster/home/kostfab1/DC-GEN/job_submits/flow_fp8_tweo_resume.yaml \
+  --bf16-config configs/experiments/flow_bf16_baseline.yaml \
+  --warmup 3 \
+  --timed 10 \
+  --out logs/profile_train_compare/results_${SLURM_JOB_ID}.json
