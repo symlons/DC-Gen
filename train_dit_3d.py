@@ -34,6 +34,7 @@ import sysconfig
 
 def load_autoencoder(cfg: TrainDiT3DConfig, model_dtype, device):
     import glob
+    import yaml
     from dc_gen.ae_model_zoo import create_dc_ae_model_cfg
     from dc_gen.aecore.models.dc_ae import DCAE
     
@@ -44,7 +45,12 @@ def load_autoencoder(cfg: TrainDiT3DConfig, model_dtype, device):
         latest_checkpoint = checkpoint_files[-1]
         rank0_print(f"Loading autoencoder from checkpoint: {latest_checkpoint}")
         
-        ae_cfg = create_dc_ae_model_cfg(cfg.model.ae_model_name)
+        variant = None
+        registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "models", "registry.yaml")
+        if os.path.exists(registry_path):
+            with open(registry_path) as f:
+                variant = yaml.safe_load(f).get(cfg.model.ae_model_name)
+        ae_cfg = create_dc_ae_model_cfg(cfg.model.ae_model_name, variant=variant)
         ae_cfg.pretrained_path = None
         autoencoder = DCAE(ae_cfg)
         

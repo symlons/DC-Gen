@@ -1,0 +1,39 @@
+#!/bin/bash
+
+#SBATCH --account=cai_ivs
+#SBATCH --partition=gpu_top
+#SBATCH --gres=gpu:h200sxm:1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=128G
+#SBATCH --time=24:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --array=0-1
+#SBATCH --job-name=gen_lat256_adapt
+#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/generate_latents/%x_%A_%a.out
+#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/generate_latents/%x_%A_%a.err
+#SBATCH --chdir=/cluster/home/kostfab1/DC-Gen/
+#SBATCH --open-mode=append
+
+set -euo pipefail
+
+CONFIGS=(
+  configs/experiments/latent_ablation/generate_last_latent256_adaptiveio_train.yaml
+  configs/experiments/latent_ablation/generate_last_latent256_adaptiveio_valid.yaml
+)
+
+CONFIG=${CONFIGS[$SLURM_ARRAY_TASK_ID]}
+
+echo "Running on $(hostname)"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Array task: $SLURM_ARRAY_TASK_ID"
+echo "Config: $CONFIG"
+echo "Starting at $(date)"
+
+module load cuda/13.2.0
+source /cluster/home/kostfab1/dev2/bin/activate
+export PYTHONPATH=/cluster/home/kostfab1/DC-Gen/compat:${PYTHONPATH:-}
+mkdir -p /cluster/home/kostfab1/DC-Gen/logs/generate_latents
+
+python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA not visible'; print('CUDA visible', torch.cuda.get_device_name(0), 'count=', torch.cuda.device_count())"
+python3 -m applications.dc_ae.dc_ae_generate_latent_3d yaml="$CONFIG"

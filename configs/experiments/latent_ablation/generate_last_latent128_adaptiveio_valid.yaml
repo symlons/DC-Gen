@@ -1,0 +1,21 @@
+latent_root_path: "/cluster/projects/2025_stmd_VT_diff/latents/last_latent128_adaptiveio_best/valid"
+nifti_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
+group_names: ["Vol_full"]
+n_slices: 32
+fraction: 1.0
+clip_input_range: [-1000.0, 1000.0]
+normalize_mode: "fixed"
+normalize_input_range: [-1000.0, 1000.0]
+normalize_output_range: [-1.0, 1.0]
+resize_hw: [256, 256]
+model_name: "last_latent128_adaptiveio"
+pretrained_path: "/cluster/projects/2025_stmd_VT_diff/kostfab1_home_artifacts_20260529_123701/DC-GEN/checkpoints/latent_ablation/last_latent128_adaptiveio/checkpoint_iter60000.pt"
+batch_size: 4
+num_workers: 8
+pin_memory: true
+prefetch_factor: 4
+dtype: "bf16"
+save_dtype: "fp32"
+save_ext: ".npy"
+resume: true
+save_queue_size: 64

@@ -175,7 +175,8 @@ def main_worker(rank: int, world_size: int, cfg):
     viz = Visualize(viz_type=cfg.dims)
 
     optimizer = torch.optim.AdamW(param_groups, lr=cfg.hparams.learning_rate, weight_decay=cfg.hparams.weight_decay)
-    global_step, wandb_run_id = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device, ema_model=ema_model)
+    gan = GANLoss(cfg, device) if cfg.objective.gan_weight > 0 else None
+    global_step, wandb_run_id = load_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, device, ema_model=ema_model, gan=gan)
     rank0_print(f"[setup] Checkpoint loaded, starting at global_step={global_step}, wandb_run_id={wandb_run_id}")
 
     # Loss init
@@ -186,8 +187,6 @@ def main_worker(rank: int, world_size: int, cfg):
     loss_fns.append(("perceptual", perceptual, cfg.objective.perceptual_weight))
     loss_fns.append(("ssim_loss", loss_registry["ssim_loss"], cfg.objective.ssim_weight))
     loss_fns.append(("grad", loss_registry["grad"](), cfg.objective.grad_weight))
-    gan = GANLoss(cfg, device) if cfg.objective.gan_weight > 0 else None
-
     checkpoint_queue = deque()
     num_epochs = cfg.training.num_epochs
     max_steps = getattr(cfg.training, "max_steps", None)
@@ -276,7 +275,7 @@ def main_worker(rank: int, world_size: int, cfg):
 
             if save_ckpt:
                 barrier()
-                if is_main_process(): save_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, global_step, checkpoint_queue, cfg.training.max_checkpoints, ema_model=ema_model)
+                if is_main_process(): save_checkpoint(cfg, model, optimizer, cfg.paths.checkpoint_dir, global_step, checkpoint_queue, cfg.training.max_checkpoints, ema_model=ema_model, gan=gan)
                 barrier()
             global_step += 1
         if max_steps is not None and global_step >= max_steps:

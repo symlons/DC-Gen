@@ -86,6 +86,7 @@ class TrainingConfig:
     dtype: str = "float32"
     autocast_dtype: str = "auto"
     resume_from_checkpoint: bool = True
+    resume_from_checkpoint_path: Optional[str] = None
     load_optimizer_state: bool = True
     checkpoint_every: int = 1000
     max_checkpoints: int = 4

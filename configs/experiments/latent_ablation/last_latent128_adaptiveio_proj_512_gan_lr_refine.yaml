@@ -1,0 +1,52 @@
+dims: "3d"
+
+experiment:
+  name: "last_latent128_adaptiveio_proj_512_gan_lr_refine"
+  description: "Phase-3 low-resolution local GAN refinement after 512 latent adaptation, following DC-AE decoupled high-resolution adaptation."
+
+paths:
+  save_dir: "/cluster/home/kostfab1/DC-Gen/latent_ablation"
+  checkpoint_dir: "/cluster/home/kostfab1/DC-GEN/checkpoints/latent_ablation/last_latent128_adaptiveio_proj_512_gan_lr_refine"
+
+training:
+  max_steps: 70000
+  seed: 827491
+  num_epochs: 350
+  batch_size: 4
+  resume_from_checkpoint: true
+  resume_from_checkpoint_path: null
+  load_optimizer_state: false
+  checkpoint_every: 2500
+  max_checkpoints: 4
+  trainable_ae_params:
+    - ["decoder.project_out.*", "decoder.stages.0.*"]
+
+pipeline:
+  resize_hw: [256, 256]
+  normalize_input_range: [-1000, 1000]
+
+hparams:
+  learning_rate: 5.4e-5
+  discriminator_learning_rate: 5.4e-5
+  weight_decay: 0.0
+
+objective:
+  loss_fn: "l1"
+  perceptual_weight: 0.25
+  ssim_weight: 0.3
+  grad_weight: 0.0
+  gan_weight: 0.1
+  gan_loss_type: "hinge"
+  gan_patch_size: [16, 64, 64]
+  gan_ndf: 64
+  gan_discriminator_steps: 4
+
+logging:
+  wandb: true
+  wandb_project: "ae_last_latent_adaptive_ablation"
+  wandb_group: "last_aniso_seed1_proj_512_gan_lr_refine"
+  wandb_resume_run: false
+  save_volumes: true
+  viz_every: 1000
+  validate_every: 2500
+  print_model_arch: true

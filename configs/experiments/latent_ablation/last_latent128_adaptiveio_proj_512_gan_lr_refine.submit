@@ -1,0 +1,89 @@
+#!/bin/bash
+
+#SBATCH --account=cai_ivs
+#SBATCH --partition=gpu_top
+#SBATCH --gres=gpu:h200sxm:1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --time=24:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --job-name=gan_lr_refine_128
+#SBATCH --output=/cluster/home/kostfab1/DC-Gen/logs/slurm/%x_%j.out
+#SBATCH --error=/cluster/home/kostfab1/DC-Gen/logs/slurm/%x_%j.err
+#SBATCH --chdir=/cluster/home/kostfab1/DC-Gen/
+#SBATCH --signal=B:SIGUSR1@90
+#SBATCH --requeue
+#SBATCH --open-mode=append
+
+set -euo pipefail
+
+BASE_CONFIG="configs/experiments/latent_ablation/last_latent128_adaptiveio_proj_512_gan_lr_refine.yaml"
+RUNTIME_CONFIG="/cluster/home/kostfab1/DC-GEN/job_submits/last_latent128_adaptiveio_proj_512_gan_lr_refine_runtime.yaml"
+MODEL=last_latent128_adaptiveio
+ADAPT_CKPT_DIR="/cluster/projects/2025_stmd_VT_diff/DC-GEN/checkpoints/latent_ablation/last_latent128_adaptiveio_proj_512"
+PHASE3_CKPT_DIR="/cluster/projects/2025_stmd_VT_diff/DC-GEN/checkpoints/latent_ablation/last_latent128_adaptiveio_proj_512_gan_lr_refine"
+
+handle_signal() {
+  echo "STOP SIGNAL DETECTED - REQUEUING JOB"
+  if [ -n "${child_pid:-}" ]; then
+    kill -INT "$child_pid" || true
+    sleep 10
+    if kill -0 "$child_pid" 2>/dev/null; then
+      kill -KILL "$child_pid" || true
+    fi
+  fi
+  scontrol requeue "$SLURM_JOB_ID"
+  exit 0
+}
+trap 'handle_signal' USR1
+
+echo "Running on $(hostname)"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Base config: $BASE_CONFIG"
+echo "Model: $MODEL"
+echo "Starting at $(date)"
+
+module load cuda/13.2.0
+source /cluster/home/kostfab1/dev2/bin/activate
+export PYTHONPATH=/cluster/home/kostfab1/DC-Gen/compat:${PYTHONPATH:-}
+mkdir -p /cluster/home/kostfab1/DC-GEN/job_submits /cluster/home/kostfab1/DC-Gen/logs/slurm
+
+LATEST_PHASE3_CKPT=$(ls -1 "$PHASE3_CKPT_DIR"/checkpoint_iter*.pt 2>/dev/null | sort -V | tail -n 1 || true)
+if [ -n "$LATEST_PHASE3_CKPT" ]; then
+  SOURCE_CKPT="$LATEST_PHASE3_CKPT"
+  LOAD_OPTIMIZER_STATE=true
+  echo "Resuming phase-3 checkpoint: $SOURCE_CKPT"
+else
+  SOURCE_CKPT=$(ls -1 "$ADAPT_CKPT_DIR"/checkpoint_iter*.pt 2>/dev/null | sort -V | tail -n 1 || true)
+  LOAD_OPTIMIZER_STATE=false
+  if [ -z "$SOURCE_CKPT" ]; then
+    echo "No adaptation checkpoint found in $ADAPT_CKPT_DIR"
+    exit 1
+  fi
+  echo "Starting phase-3 from adaptation checkpoint: $SOURCE_CKPT"
+fi
+
+python3 -c "from omegaconf import OmegaConf; cfg=OmegaConf.load('$BASE_CONFIG'); cfg.training.resume_from_checkpoint_path='$SOURCE_CKPT'; cfg.training.load_optimizer_state=$LOAD_OPTIMIZER_STATE; OmegaConf.save(cfg, '$RUNTIME_CONFIG'); print('Runtime config written', '$RUNTIME_CONFIG', 'load_optimizer_state=', $LOAD_OPTIMIZER_STATE)"
+
+NUM_GPUS=${SLURM_GPUS_ON_NODE:-1}
+for port in 8972 8973 8974 8975 8976 8977; do
+  if ! ss -tuln | grep -q ":$port "; then
+    MASTER_PORT=$port
+    break
+  fi
+done
+if [ -z "${MASTER_PORT:-}" ]; then
+  echo "No free port found in range"
+  exit 1
+fi
+export MASTER_PORT
+export MASTER_ADDR=$(hostname)
+
+python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA not visible'; print('CUDA visible', torch.cuda.get_device_name(0), 'count=', torch.cuda.device_count())"
+python3 -c "from config import load_config; cfg=load_config(yaml_path='$RUNTIME_CONFIG', model='$MODEL'); print('Config preflight OK', cfg.experiment.name, 'max_steps=', cfg.training.max_steps, 'batch_size=', cfg.training.batch_size, 'resize=', cfg.pipeline.resize_hw, 'trainable=', cfg.training.trainable_ae_params, 'resume_path=', cfg.training.resume_from_checkpoint_path, 'gan_weight=', cfg.objective.gan_weight)"
+
+OMP_NUM_THREADS=1 torchrun   --nproc_per_node=$NUM_GPUS   --master_port=$MASTER_PORT   structure.py --config "$RUNTIME_CONFIG" --model "$MODEL" &
+
+child_pid=$!
+wait "$child_pid"

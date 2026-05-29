@@ -14,7 +14,31 @@ def _get_base_model(model):
     return model
 
 
-def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque, max_checkpoints: int, ema_model=None):
+def _checkpoint_iter(path):
+    name = os.path.basename(path)
+    try:
+        return int(name.removeprefix("checkpoint_iter").removesuffix(".pt"))
+    except ValueError:
+        return -1
+
+
+def _sorted_checkpoints(checkpoint_dir):
+    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "checkpoint_iter*.pt"))
+    return sorted(checkpoint_files, key=lambda path: (_checkpoint_iter(path), os.path.getmtime(path)))
+
+
+def _prune_checkpoints(checkpoint_dir, max_checkpoints):
+    if max_checkpoints is None or max_checkpoints <= 0:
+        return
+    for old_ckpt in _sorted_checkpoints(checkpoint_dir)[:-max_checkpoints]:
+        if os.path.isfile(old_ckpt):
+            try:
+                os.remove(old_ckpt)
+            except Exception as e:
+                print(f"Failed to delete old checkpoint {old_ckpt}: {e}")
+
+
+def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque, max_checkpoints: int, ema_model=None, gan=None):
     os.makedirs(save_dir, exist_ok=True)
     ckpt_path = os.path.join(save_dir, f"checkpoint_iter{it}.pt")
 
@@ -25,6 +49,9 @@ def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque
         "optimizer_state_dict": optimizer.state_dict(),
     }
     if ema_model is not None: checkpoint["ema_state_dict"] = ema_model.state_dict()
+    if gan is not None:
+        checkpoint["gan_state_dict"] = gan.state_dict()
+        checkpoint["gan_discriminator_optimizer_state_dict"] = gan.discriminator_optimizer.state_dict()
     if wandb.run is not None: checkpoint['wandb_run_id'] = wandb.run.id
 
     try:
@@ -40,22 +67,18 @@ def save_checkpoint(cfg, model, optimizer, save_dir, it, checkpoint_queue: deque
             print(f"Failed to save checkpoint to WandB: {e}")
 
     checkpoint_queue.append(ckpt_path)
-    while len(checkpoint_queue) > max_checkpoints:
-        old_ckpt = checkpoint_queue.popleft()
-        if os.path.isfile(old_ckpt):
-            try:
-                os.remove(old_ckpt)
-            except Exception as e:
-                print(f"Failed to delete old checkpoint {old_ckpt}: {e}")
+    _prune_checkpoints(save_dir, max_checkpoints)
+    checkpoint_queue.clear()
+    checkpoint_queue.extend(_sorted_checkpoints(save_dir)[-max_checkpoints:])
 
 
-def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=None):
+def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=None, gan=None):
     resume = getattr(cfg.training, "resume_from_checkpoint", False)
     if not resume: return 0, None
 
     ckpt_path = getattr(cfg.training, "resume_from_checkpoint_path", None)
     if not (ckpt_path and os.path.isfile(ckpt_path)):
-        checkpoint_files = sorted(glob.glob(os.path.join(checkpoint_dir, "checkpoint_iter*.pt")))
+        checkpoint_files = _sorted_checkpoints(checkpoint_dir)
         ckpt_path = checkpoint_files[-1] if checkpoint_files else None
 
     if not ckpt_path:
@@ -91,6 +114,15 @@ def load_checkpoint(cfg, model, optimizer, checkpoint_dir, device, ema_model=Non
             
         if ema_model is not None and "ema_state_dict" in ckpt: ema_model.load_state_dict(ckpt["ema_state_dict"])
         else: print("Could not find an ema model within the checkpoint.")
+
+        if gan is not None:
+            if "gan_state_dict" in ckpt:
+                gan.load_state_dict(ckpt["gan_state_dict"])
+                if load_optimizer_state and "gan_discriminator_optimizer_state_dict" in ckpt:
+                    gan.discriminator_optimizer.load_state_dict(ckpt["gan_discriminator_optimizer_state_dict"])
+                print("Loaded GAN discriminator state from checkpoint.")
+            else:
+                print("Could not find GAN discriminator state within the checkpoint.")
     except Exception as e:
         print(f"Failed to load checkpoint {ckpt_path}: {e}")
         return 0, None

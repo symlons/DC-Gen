@@ -1,0 +1,115 @@
+dims: "3d"
+experiment:
+  name: "dit_3d_recflow_bf16_last_latent256_adaptiveio"
+
+dataset:
+  train_dir: null
+  val_dir: null
+  extensions: [".npy", ".pt", ".pth"]
+  recursive: true
+  fraction: 1.0
+  val_fraction: 1.0
+  seed: 42
+
+paths:
+  hdf_path: "/data/ct_rate_train_batch_0_v13.hdf"
+  checkpoint_root_dir: "/cluster/home/kostfab1/DC-Gen/checkpoints/flow_bf16_last_latent256_adaptiveio"
+  save_root_dir: "/cluster/home/kostfab1/DC-Gen/flow_bf16_last_latent256_adaptiveio"
+  latent_train_dir: "/cluster/projects/2025_stmd_VT_diff/latents/last_latent256_adaptiveio_best/train"
+  latent_val_dir: "/cluster/projects/2025_stmd_VT_diff/latents/last_latent256_adaptiveio_best/valid"
+  nifti_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/train/"
+  nifti_val_dir: "/cluster/projects/ac3t/data/ac3t_ct_rate/processed/valid/"
+
+objective:
+  eps: 1e-5
+  mode: "uniform"
+  mu: 0.0
+  sigma: 1.0
+  beta_a: 1.0
+  beta_b: 1.0
+  latent_mean: 0.0
+  latent_std: 1.0
+
+training:
+  num_epochs: 3500
+  batch_size: 512
+  shuffle_data: true
+  drop_last: true
+  num_workers: 8
+  persistent_workers: true
+  pin_memory: true
+  prefetch_factor: null
+  dtype: "float32"
+  autocast_dtype: "bfloat16"
+  use_autocast: true
+  compile: true
+  learning_rate: 2e-4
+  weight_decay: 1e-2
+  grad_clip_norm: 1.0
+  checkpoint_every: 2000
+  max_checkpoints: 8
+  resume_from_checkpoint: false
+  resume_from_checkpoint_path: null
+  log_every: 10
+  ema_decay: 0.9999
+  ema_warmup_steps: 2000
+
+tweo:
+  enabled: false
+  weight: 0.01
+  tau: 3.0
+  power: 4.0
+  eps: 1e-6
+  schedule: "constant"
+  log_activations: true
+
+transformer_engine:
+  enabled: false
+  replace_linears: false
+  fp8_autocast: false
+  recipe_format: "HYBRID"
+  amax_history_len: 16
+  amax_compute_algo: "max"
+
+model:
+  variant: "DiT-L/1"
+  input_size: null
+  patch_size: 1
+  in_channels: 256
+  num_classes: 1
+  class_dropout_prob: 0.0
+  learn_sigma: false
+  ae_model_name: "last_latent256_adaptiveio"
+  ae_checkpoint_dir: "/cluster/projects/2025_stmd_VT_diff/kostfab1_home_artifacts_20260529_123701/DC-GEN/checkpoints/latent_ablation/last_latent256_adaptiveio"
+
+sampling:
+  enabled: true
+  sample_steps: 50
+  solver: "euler"
+  time_schedule: "linear"
+  time_schedule_power: 2.0
+  num_samples: 8
+  batch_size: 4
+  sample_every: 1000
+  output_dir: null
+  save_dtype: "float32"
+  t_start: 0.0
+  t_end: 1.0
+
+logging:
+  wandb: true
+  wandb_project: "ct_dit_3d_precision_baselines"
+  wandb_group: "bf16_last_latent256_adaptiveio"
+  validate_every: 1000
+  max_val_batches: null
+  save_samples: true
+
+inspection:
+  enabled: false
+  inspect_every: 100
+  module_names: []
+  capture_weights: true
+  capture_gradients: true
+  capture_activations: true
+  print_summary: true
+  log_to_wandb: true

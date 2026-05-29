@@ -1,4 +1,5 @@
 import os
+import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -156,7 +157,12 @@ class LatentEncoderAdapter:
 
 
 def build_model(cfg):
-    model_cfg = create_dc_ae_model_cfg(cfg.model_name, cfg.pretrained_path)
+    variant = None
+    registry_path = Path(__file__).resolve().parents[2] / "configs" / "models" / "registry.yaml"
+    if registry_path.exists():
+        with open(registry_path) as f:
+            variant = yaml.safe_load(f).get(cfg.model_name)
+    model_cfg = create_dc_ae_model_cfg(cfg.model_name, cfg.pretrained_path, variant=variant)
     model = DCAE(model_cfg)
 
     scaling = model_cfg.scaling_factor
